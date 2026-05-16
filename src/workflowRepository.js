@@ -42,7 +42,7 @@ export async function findPricingRule(messageText) {
 
 export async function createPredictionRequest({ customer, rawText, messageSource, receivedAt }) {
   const pricing = await calculatePredictionPricing(rawText, receivedAt);
-  const status = pricing ? "pending_payment" : "ignored";
+  const status = pricing?.manualWork ? "manual_work" : (pricing ? "pending_payment" : "ignored");
   const result = await query(
     `
       INSERT INTO prediction_requests (
@@ -88,13 +88,13 @@ export async function createPredictionRequest({ customer, rawText, messageSource
       messageSource,
       customer.whatsappSender,
       rawText,
-      pricing ? pricing.totalPrice : null,
-      pricing ? pricing.rule.id : null,
+      pricing && !pricing.manualWork ? pricing.totalPrice : null,
+      pricing?.rule?.id || null,
       pricing ? pricing.show.code : null,
       pricing ? pricing.market : null,
       pricing ? pricing.gameType : null,
-      pricing ? pricing.unitPrice : null,
-      pricing ? pricing.quantity : null,
+      pricing && !pricing.manualWork ? pricing.unitPrice : null,
+      pricing && !pricing.manualWork ? pricing.quantity : null,
       JSON.stringify(pricing ? pricing.numbers : []),
       JSON.stringify(pricing ? pricing.breakdown : {}),
       status,

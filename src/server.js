@@ -6,6 +6,7 @@ import multer from "multer";
 import { config } from "./config.js";
 import { closePool, query } from "./db.js";
 import { listCredits, upsertCredit } from "./creditsRepository.js";
+import { checkAppLicense } from "./licenseRepository.js";
 import { validateCreditPayload } from "./validateCredit.js";
 import {
   createOutboundMessage,
@@ -31,7 +32,17 @@ const upload = multer({
 });
 
 app.use(cors());
-app.use(express.json({ limit: "256kb" }));
+app.use(express.json({
+  limit: "256kb",
+  verify: (req, _res, buffer) => {
+    req.rawBody = buffer.toString("utf8");
+  }
+}));
+
+const seenSignedRequestNonces = new Map();
+const SIGNATURE_WINDOW_MS = 5 * 60 * 1000;
+
+app.use("/api", verifySignedRequest);
 
 app.get("/health", async (_req, res, next) => {
   try {
@@ -44,6 +55,18 @@ app.get("/health", async (_req, res, next) => {
 
 app.post("/api/credits", async (req, res, next) => {
   try {
+    const license = await checkAppLicense({
+      deviceId: req.body?.deviceId || "",
+      phoneNumbers: [
+        ...(Array.isArray(req.body?.phoneNumbers) ? req.body.phoneNumbers : []),
+        req.body?.receivedPhoneNumber || ""
+      ]
+    });
+    if (!license.allowed) {
+      res.status(403).json({ ok: false, mode: license.mode, errors: [license.reason] });
+      return;
+    }
+
     const validation = validateCreditPayload(req.body || {});
     if (!validation.ok) {
       res.status(400).json({ ok: false, errors: validation.errors });
@@ -52,6 +75,18 @@ app.post("/api/credits", async (req, res, next) => {
 
     const credit = await upsertCredit(validation.credit);
     res.status(201).json({ ok: true, credit });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/app-license/check", async (req, res, next) => {
+  try {
+    const license = await checkAppLicense({
+      deviceId: req.body?.deviceId || "",
+      phoneNumbers: Array.isArray(req.body?.phoneNumbers) ? req.body.phoneNumbers : []
+    });
+    res.json({ ok: true, ...license });
   } catch (error) {
     next(error);
   }
@@ -519,6 +554,73 @@ function looksLikePhone(value) {
 function looksLikeTimestamp(value) {
   const parsed = parseFlexibleDate(value);
   return Boolean(parsed);
+}
+
+function verifySignedRequest(req, res, next) {
+  if (!config.apiRequestSecret) {
+    next();
+    return;
+  }
+
+  cleanupSignedRequestNonces();
+
+  const timestamp = req.get("X-WA-Timestamp") || "";
+  const nonce = req.get("X-WA-Nonce") || "";
+  const signature = req.get("X-WA-Signature") || "";
+  const timestampNumber = Number(timestamp);
+  const now = Date.now();
+
+  if (!timestamp || !nonce || !signature || !Number.isFinite(timestampNumber)) {
+    res.status(401).json({ ok: false, errors: ["signed request headers are required"] });
+    return;
+  }
+  if (Math.abs(now - timestampNumber) > SIGNATURE_WINDOW_MS) {
+    res.status(401).json({ ok: false, errors: ["signed request timestamp expired"] });
+    return;
+  }
+
+  const nonceKey = `${timestamp}:${nonce}`;
+  if (seenSignedRequestNonces.has(nonceKey)) {
+    res.status(401).json({ ok: false, errors: ["signed request nonce already used"] });
+    return;
+  }
+
+  const rawBody = req.rawBody || "";
+  const bodyHash = crypto.createHash("sha256").update(rawBody).digest("hex");
+  const payload = [
+    req.method.toUpperCase(),
+    req.originalUrl,
+    timestamp,
+    nonce,
+    bodyHash
+  ].join("\n");
+  const expected = crypto.createHmac("sha256", config.apiRequestSecret).update(payload).digest("hex");
+
+  if (!timingSafeEqual(signature, expected)) {
+    res.status(401).json({ ok: false, errors: ["invalid signed request"] });
+    return;
+  }
+
+  seenSignedRequestNonces.set(nonceKey, timestampNumber);
+  next();
+}
+
+function cleanupSignedRequestNonces() {
+  const cutoff = Date.now() - SIGNATURE_WINDOW_MS;
+  for (const [key, timestamp] of seenSignedRequestNonces.entries()) {
+    if (timestamp < cutoff) {
+      seenSignedRequestNonces.delete(key);
+    }
+  }
+}
+
+function timingSafeEqual(actual, expected) {
+  const actualBuffer = Buffer.from(String(actual), "hex");
+  const expectedBuffer = Buffer.from(String(expected), "hex");
+  if (actualBuffer.length !== expectedBuffer.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
 function stableJson(value) {
