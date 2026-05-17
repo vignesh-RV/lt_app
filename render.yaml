@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: wa-plus-api
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    disk:
+      name: wa-plus-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TESSERACT_PATH
+        value: tesseract
+      - key: BAILEYS_AUTH_DIR
+        value: /var/data/baileys-auth
+

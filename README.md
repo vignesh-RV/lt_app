@@ -184,7 +184,30 @@ Observed screenshot variants in `api/bills`:
 
 ### OCR Payment Screenshot
 
-Tesseract OCR must be installed and `TESSERACT_PATH` must point to `tesseract.exe`.
+Tesseract OCR must be installed and `TESSERACT_PATH` must point to the executable.
+
+Local Windows example:
+
+```env
+TESSERACT_PATH=C:\Program Files\Tesseract-OCR\tesseract.exe
+```
+
+Docker/Render example:
+
+```env
+TESSERACT_PATH=tesseract
+```
+
+For Render production, deploy the API as Docker using `api/Dockerfile`. The image installs:
+
+- `tesseract-ocr`
+- `tesseract-ocr-eng`
+
+Also use a persistent disk for WhatsApp auth:
+
+```env
+BAILEYS_AUTH_DIR=/var/data/baileys-auth
+```
 
 ```http
 POST /api/payment-proofs/ocr
