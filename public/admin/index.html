@@ -48,10 +48,10 @@
 
       <section id="overview" class="panel active">
         <div class="stats">
-          <div class="stat-card accounts"><span id="statAccounts">0</span><label>Accounts</label></div>
-          <div class="stat-card running"><span id="statRunning">0</span><label>Running</label></div>
-          <div class="stat-card bookings"><span id="statBookings">0</span><label>Bookings</label></div>
-          <div class="stat-card credits"><span id="statCredits">0</span><label>Credits</label></div>
+          <div id="statAccountsCard" class="stat-card accounts clickable"><span id="statAccounts">0</span><label>Accounts</label></div>
+          <div id="statRunningCard" class="stat-card running clickable"><span id="statRunning">0</span><label>Running</label></div>
+          <div id="statBookingsCard" class="stat-card bookings clickable"><span id="statBookings">0</span><label>Bookings</label></div>
+          <div id="statCreditsCard" class="stat-card credits clickable"><span id="statCredits">0</span><label>Credits</label></div>
         </div>
         <div class="chart-grid">
           <div class="surface chart-panel">
@@ -155,11 +155,16 @@
             <button id="loadSupport">Refresh</button>
           </div>
           <div class="stats compact-stats">
-            <div class="stat-card bookings"><span id="supportSuccess">0</span><label>Successful</label></div>
-            <div class="stat-card credits"><span id="supportMissing">0</span><label>Payment missing</label></div>
-            <div class="stat-card running"><span id="supportBalance">0</span><label>With balance</label></div>
-            <div class="stat-card accounts"><span id="supportManual">0</span><label>Manual support</label></div>
+            <div id="supportConversationsCard" class="stat-card running clickable"><span id="supportConversations">0</span><label>Users started</label></div>
+            <div id="supportSuccessCard" class="stat-card bookings clickable"><span id="supportSuccess">0</span><label>Successful</label></div>
+            <div id="supportMissingCard" class="stat-card credits clickable"><span id="supportMissing">0</span><label>Payment missing</label></div>
+            <div id="supportBalanceCard" class="stat-card running clickable"><span id="supportBalance">0</span><label>With balance</label></div>
+            <div id="supportManualCard" class="stat-card accounts clickable"><span id="supportManual">0</span><label>Manual support</label></div>
           </div>
+        </div>
+        <div class="surface">
+          <h2 id="supportDetailTitle">Users who started conversation</h2>
+          <div id="supportDetails"></div>
         </div>
         <div class="split support-split">
           <div class="surface">

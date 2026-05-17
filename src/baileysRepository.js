@@ -637,6 +637,57 @@ export async function listBookingStats({ days = 14 } = {}) {
 
 export async function listSupportSummary({ accountId = 0, limit = 200 } = {}) {
   const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 500);
+  const conversations = await query(
+    `
+      WITH ranked AS (
+        SELECT
+          e.account_id AS "accountId",
+          e.account_key AS "accountKey",
+          a.display_name AS "accountName",
+          e.remote_jid AS "remoteJid",
+          e.sender_jid AS "senderJid",
+          e.message_text AS "messageText",
+          e.event_type AS "eventType",
+          e.created_at AS "lastMessageAt",
+          COUNT(*) OVER (
+            PARTITION BY e.account_id, COALESCE(NULLIF(e.sender_jid, ''), e.remote_jid)
+          )::INTEGER AS "messageCount",
+          ROW_NUMBER() OVER (
+            PARTITION BY e.account_id, COALESCE(NULLIF(e.sender_jid, ''), e.remote_jid)
+            ORDER BY e.created_at DESC
+          ) AS rn
+        FROM whatsapp_listener_events e
+        JOIN whatsapp_listener_accounts a ON a.id = e.account_id
+        WHERE ($1::BIGINT = 0 OR e.account_id = $1)
+          AND COALESCE(e.remote_jid, '') <> ''
+          AND (
+            e.event_type LIKE 'message_%'
+            OR e.event_type LIKE 'payment_proof_%'
+          )
+      )
+      SELECT *
+      FROM ranked
+      WHERE rn = 1
+      ORDER BY "lastMessageAt" DESC
+      LIMIT $2
+    `,
+    [accountId, safeLimit]
+  );
+
+  const conversationCount = await query(
+    `
+      SELECT COUNT(DISTINCT (e.account_id::TEXT || '|' || COALESCE(NULLIF(e.sender_jid, ''), e.remote_jid)))::INTEGER AS count
+      FROM whatsapp_listener_events e
+      WHERE ($1::BIGINT = 0 OR e.account_id = $1)
+        AND COALESCE(e.remote_jid, '') <> ''
+        AND (
+          e.event_type LIKE 'message_%'
+          OR e.event_type LIKE 'payment_proof_%'
+        )
+    `,
+    [accountId]
+  );
+
   const balances = await query(
     `
       SELECT
@@ -700,6 +751,32 @@ export async function listSupportSummary({ accountId = 0, limit = 200 } = {}) {
     [accountId, safeLimit]
   );
 
+  const successful = await query(
+    `
+      SELECT
+        m.id,
+        m.account_id AS "accountId",
+        m.account_key AS "accountKey",
+        a.display_name AS "accountName",
+        m.remote_jid AS "remoteJid",
+        m.sender_jid AS "senderJid",
+        m.push_name AS "pushName",
+        m.show_code AS "showCode",
+        m.message_text AS "messageText",
+        m.calculated_price::TEXT AS "calculatedPrice",
+        m.forwarded_at AS "forwardedAt",
+        m.forwarded_to_jid AS "forwardedToJid",
+        m.received_at AS "receivedAt"
+      FROM whatsapp_inbound_messages m
+      JOIN whatsapp_listener_accounts a ON a.id = m.account_id
+      WHERE ($1::BIGINT = 0 OR m.account_id = $1)
+        AND m.forwarded_at IS NOT NULL
+      ORDER BY m.forwarded_at DESC
+      LIMIT $2
+    `,
+    [accountId, safeLimit]
+  );
+
   const agents = await query(
     `
       SELECT
@@ -744,10 +821,13 @@ export async function listSupportSummary({ accountId = 0, limit = 200 } = {}) {
   return {
     kpis: {
       ...kpis.rows[0],
-      customersWithBalance: balances.rows.length
+      customersWithBalance: balances.rows.length,
+      conversationCustomers: conversationCount.rows[0]?.count || 0
     },
+    conversations: conversations.rows,
     balances: balances.rows,
     support: support.rows,
+    successful: successful.rows,
     agents: agents.rows
   };
 }

@@ -251,6 +251,16 @@ header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
   border-radius: 50%;
   opacity: .14;
 }
+.stat-card.clickable {
+  cursor: pointer;
+  transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+}
+.stat-card.clickable:hover,
+.stat-card.selected {
+  transform: translateY(-1px);
+  border-color: #9fc9c2;
+  box-shadow: 0 10px 24px rgba(20,33,31,.10);
+}
 .stat-card.accounts::after { background: var(--blue); }
 .stat-card.running::after { background: var(--green); }
 .stat-card.bookings::after { background: var(--violet); }

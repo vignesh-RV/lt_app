@@ -4,7 +4,7 @@ const state = {
   stats: [],
   events: [],
   proofs: [],
-  support: { kpis: {}, balances: [], support: [], agents: [] },
+  support: { kpis: {}, conversations: [], balances: [], support: [], successful: [], agents: [] },
   forwardTargets: [],
   forwardChats: [],
   credits: [],
@@ -36,6 +36,15 @@ document.getElementById("loadSupport").onclick = loadSupport;
 document.getElementById("loadCredits").onclick = loadCredits;
 document.getElementById("loadForwardChats").onclick = loadForwardChats;
 document.getElementById("forwardChatSearch").oninput = renderForwardRows;
+document.getElementById("statAccountsCard").onclick = () => showTab("accounts");
+document.getElementById("statRunningCard").onclick = () => showTab("accounts");
+document.getElementById("statBookingsCard").onclick = () => showTab("bookings");
+document.getElementById("statCreditsCard").onclick = () => showTab("credits");
+document.getElementById("supportConversationsCard").onclick = () => showSupportDetails("conversations");
+document.getElementById("supportSuccessCard").onclick = () => showSupportDetails("successful");
+document.getElementById("supportMissingCard").onclick = () => showSupportDetails("missing");
+document.getElementById("supportBalanceCard").onclick = () => showSupportDetails("balances");
+document.getElementById("supportManualCard").onclick = () => showSupportDetails("manual");
 
 for (const button of document.querySelectorAll(".tab")) {
   button.onclick = () => showTab(button.dataset.tab);
@@ -521,8 +530,10 @@ async function loadSupport() {
   const json = await api(`/support-summary?accountId=${encodeURIComponent(accountId)}&limit=200`);
   state.support = {
     kpis: json.kpis || {},
+    conversations: json.conversations || [],
     balances: json.balances || [],
     support: json.support || [],
+    successful: json.successful || [],
     agents: json.agents || []
   };
   renderSupport();
@@ -531,10 +542,12 @@ async function loadSupport() {
 
 function renderSupport() {
   const kpis = state.support.kpis || {};
+  document.getElementById("supportConversations").textContent = kpis.conversationCustomers || 0;
   document.getElementById("supportSuccess").textContent = kpis.successfulBookings || 0;
   document.getElementById("supportMissing").textContent = kpis.paymentMissingBookings || 0;
   document.getElementById("supportBalance").textContent = kpis.customersWithBalance || 0;
   document.getElementById("supportManual").textContent = kpis.manualSupportBookings || 0;
+  showSupportDetails(state.supportDetail || "conversations", { preserveCard: true });
 
   document.getElementById("supportQueue").innerHTML = (state.support.support || []).slice(0, 80).map((item) => {
     const type = item.manualWork ? "Manual" : Number(item.pendingAmount || 0) > 0 ? `Pend Rs ${money(item.pendingAmount)}` : "Paid wait";
@@ -565,6 +578,72 @@ function renderSupport() {
       <td>${escapeHtml(item.manualCount)}</td>
     </tr>
   `).join("") || `<tr><td colspan="7">No agent booking data.</td></tr>`;
+}
+
+function showSupportDetails(mode, options = {}) {
+  state.supportDetail = mode;
+  if (!options.preserveCard) {
+    document.querySelectorAll("#support .stat-card").forEach((item) => item.classList.remove("selected"));
+    document.getElementById(`support${supportModeId(mode)}Card`)?.classList.add("selected");
+  }
+  const title = {
+    conversations: "Users who started conversation",
+    successful: "Successful bookings",
+    missing: "Payment missing customers",
+    balances: "Customers with balance",
+    manual: "Manual support required"
+  }[mode] || "Support details";
+  document.getElementById("supportDetailTitle").textContent = title;
+  document.getElementById("supportDetails").innerHTML = supportDetailItems(mode).slice(0, 100).map((item) => {
+    if (mode === "conversations") {
+      return `
+        <div class="support-item">
+          <div><strong>${contactLabel(item)}</strong><span>${formatDate(item.lastMessageAt)} | ${escapeHtml(item.accountName || item.accountKey)} | ${escapeHtml(item.eventType || "-")}</span></div>
+          <b>${escapeHtml(item.messageCount || 0)} msg</b>
+          <p>${escapeHtml(item.messageText || "").slice(0, 220)}</p>
+        </div>
+      `;
+    }
+    if (mode === "balances") {
+      return `
+        <div class="support-item balance">
+          <div><strong>${contactLabel(item)}</strong><span>${escapeHtml(item.accountName || item.accountKey)} | ${showBadge(item.showCode)}</span></div>
+          <b>Rs ${money(item.balanceAmount)}</b>
+        </div>
+      `;
+    }
+    const amount = item.calculatedPrice ? `Rs ${money(item.calculatedPrice)}` : "-";
+    const status = mode === "successful"
+      ? `Sent ${formatDate(item.forwardedAt)}`
+      : item.manualWork
+        ? "Manual"
+        : `Pend Rs ${money(item.pendingAmount)}`;
+    return `
+      <div class="support-item ${item.manualWork ? "manual" : ""}">
+        <div><strong>${contactLabel(item)}</strong><span>${formatDate(item.receivedAt)} | ${escapeHtml(item.accountName || item.accountKey)} | ${showBadge(item.showCode)}</span></div>
+        <b>${escapeHtml(status)}</b>
+        <p>${escapeHtml(amount)} | ${escapeHtml(item.messageText || "").slice(0, 220)}</p>
+      </div>
+    `;
+  }).join("") || `<div class="empty-note">No details for this count.</div>`;
+}
+
+function supportModeId(mode) {
+  return {
+    conversations: "Conversations",
+    successful: "Success",
+    missing: "Missing",
+    balances: "Balance",
+    manual: "Manual"
+  }[mode] || "Conversations";
+}
+
+function supportDetailItems(mode) {
+  if (mode === "successful") return state.support.successful || [];
+  if (mode === "balances") return state.support.balances || [];
+  if (mode === "manual") return (state.support.support || []).filter((item) => item.manualWork);
+  if (mode === "missing") return (state.support.support || []).filter((item) => !item.manualWork);
+  return state.support.conversations || [];
 }
 
 function renderProofRows() {
