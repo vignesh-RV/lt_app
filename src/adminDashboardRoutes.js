@@ -48,7 +48,7 @@ adminDashboardRouter.post("/login", (req, res) => {
     return;
   }
 
-  setSessionCookie(res, username);
+  setSessionCookie(req, res, username);
   res.json({ ok: true, username, totpEnabled: Boolean(config.adminTotpSecret) });
 });
 
@@ -297,17 +297,33 @@ function sessionSecret() {
   return config.adminSessionSecret || config.adminPassword;
 }
 
-function setSessionCookie(res, username) {
+function setSessionCookie(req, res, username) {
   const expiresAt = Date.now() + SESSION_TTL_MS;
   const payload = Buffer.from(JSON.stringify({ username, expiresAt })).toString("base64url");
   const signature = sign(payload);
-  const crossSite = Boolean(config.adminCorsOrigin);
+  const crossSite = Boolean(config.adminCorsOrigin) || isCrossOriginAdminRequest(req);
   const sameSite = crossSite ? "None" : "Lax";
   const secure = crossSite ? "; Secure" : "";
   res.setHeader(
     "Set-Cookie",
     `${SESSION_COOKIE}=${payload}.${signature}; HttpOnly; SameSite=${sameSite}; Path=/admin; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}${secure}`
   );
+}
+
+function isCrossOriginAdminRequest(req) {
+  const origin = String(req.headers.origin || "");
+  if (!origin) {
+    return false;
+  }
+  const host = String(req.headers["x-forwarded-host"] || req.headers.host || "");
+  if (!host) {
+    return true;
+  }
+  try {
+    return new URL(origin).host !== host;
+  } catch {
+    return true;
+  }
 }
 
 function readSession(req) {
