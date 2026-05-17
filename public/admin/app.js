@@ -8,6 +8,7 @@ const state = {
   forwardTargets: [],
   forwardChats: [],
   credits: [],
+  qrByAccountId: {},
   session: null
 };
 let refreshTimer = null;
@@ -187,10 +188,18 @@ function renderAccounts() {
           ●
         </button>
       </div>
-      <div class="qr-slot"></div>
+      <div class="qr-slot">${accountQrHtml(account)}</div>
     </div>
   `).join("");
   normalizeAccountActionIcons(root);
+}
+
+function accountQrHtml(account) {
+  const dataUrl = state.qrByAccountId[String(account.id)];
+  if (!dataUrl || account.lastStatus === "connected") {
+    return "";
+  }
+  return `<img class="qr" src="${dataUrl}" alt="WhatsApp QR">`;
 }
 
 function normalizeAccountActionIcons(root) {
@@ -220,12 +229,14 @@ function listeningBadge(account) {
 }
 
 async function startAccount(id) {
+  delete state.qrByAccountId[String(id)];
   await api(`/accounts/${id}/start`, { method: "POST" });
   await refreshAll();
   setTimeout(refreshAll, 1500);
 }
 
 async function stopAccount(id) {
+  delete state.qrByAccountId[String(id)];
   await api(`/accounts/${id}/stop`, { method: "POST" });
   refreshAll();
 }
@@ -243,8 +254,9 @@ async function showQr(id) {
       await wait(1800);
     }
     const json = await api(`/accounts/${id}/qr`);
+    state.qrByAccountId[String(id)] = json.dataUrl;
     slot.innerHTML = `<img class="qr" src="${json.dataUrl}" alt="WhatsApp QR">`;
-    refreshAll();
+    markUpdated();
   } catch (error) {
     slot.innerHTML = `<div class="meta">${escapeHtml(error.message)}</div>`;
   }
