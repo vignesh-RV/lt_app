@@ -30,6 +30,7 @@ import { findCreditForProof } from "./workflowRepository.js";
 const sockets = new Map();
 const chatCache = new Map();
 const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || "warn" });
+let outboundReplyQueue = Promise.resolve();
 
 export async function startBaileysListeners() {
   if (!config.baileysEnabled) {
@@ -400,7 +401,7 @@ async function captureMessageIfInWindow(account, message) {
     });
   }
 
-  await storeInboundWhatsappMessage({
+  const storedMessage = await storeInboundWhatsappMessage({
     account,
     messageId: message.key.id,
     remoteJid: message.key.remoteJid || "",
@@ -424,6 +425,11 @@ async function captureMessageIfInWindow(account, message) {
     senderJid: message.key.participant || message.key.remoteJid || "",
     messageText
   });
+  await markIncomingMessageRead(account, message);
+
+  if (storedMessage && isAutoReplyPricing(pricing)) {
+    await enqueueOutboundReply(() => sendPricingReply(account, message, messageText, pricing));
+  }
 }
 
 async function capturePaymentProofMedia(account, message, receivedAt, window) {
@@ -480,6 +486,7 @@ async function capturePaymentProofMedia(account, message, receivedAt, window) {
       senderJid,
       messageText: ocrText
     });
+    await markIncomingMessageRead(account, message);
   } catch (error) {
     await storeWhatsappPaymentProof({
       account,
@@ -501,6 +508,166 @@ async function capturePaymentProofMedia(account, message, receivedAt, window) {
       messageId,
       remoteJid,
       senderJid
+    });
+    await markIncomingMessageRead(account, message);
+  }
+}
+
+function isAutoReplyPricing(pricing) {
+  return Boolean(pricing && !pricing.manualWork && pricing.totalPrice && pricing.breakdown?.entries?.length);
+}
+
+async function enqueueOutboundReply(task) {
+  const queued = outboundReplyQueue
+    .catch(() => {})
+    .then(task);
+  outboundReplyQueue = queued.catch(() => {});
+  return queued;
+}
+
+async function sendPricingReply(account, message, originalText, pricing) {
+  const remoteJid = message.key?.remoteJid || "";
+  if (!remoteJid) {
+    return;
+  }
+
+  const running = sockets.get(Number(account.id));
+  if (!isSocketConnected(running)) {
+    await storeListenerEvent({
+      account,
+      eventType: "pricing_reply_skipped",
+      detail: "socket not connected",
+      messageId: message.key?.id || "",
+      remoteJid,
+      senderJid: message.key?.participant || remoteJid
+    });
+    return;
+  }
+
+  const replyText = buildPricingReplyMessage(pricing);
+  const delayMs = typingDelayForMessage(originalText);
+  const quoted = quotedPredictionMessage(message);
+  try {
+    await waitWithTyping(running.socket, remoteJid, delayMs);
+    await running.socket.sendMessage(remoteJid, { text: replyText }, quoted ? { quoted } : undefined);
+    await running.socket.sendPresenceUpdate("paused", remoteJid);
+    await storeListenerEvent({
+      account,
+      eventType: "pricing_reply_sent",
+      detail: `delay=${delayMs}ms; amount=${pricing.totalPrice}; quoted=${quoted ? "yes" : "no"}`,
+      messageId: message.key?.id || "",
+      remoteJid,
+      senderJid: message.key?.participant || remoteJid,
+      messageText: replyText
+    });
+  } catch (error) {
+    try {
+      await running.socket.sendPresenceUpdate("paused", remoteJid);
+    } catch {
+      // Presence cleanup is best-effort.
+    }
+    await storeListenerEvent({
+      account,
+      eventType: "pricing_reply_failed",
+      detail: error.message || "reply failed",
+      messageId: message.key?.id || "",
+      remoteJid,
+      senderJid: message.key?.participant || remoteJid,
+      messageText: replyText
+    });
+  }
+}
+
+function quotedPredictionMessage(message) {
+  if (!message?.key || !message.message) {
+    return null;
+  }
+  return {
+    key: message.key,
+    message: message.message,
+    pushName: message.pushName || ""
+  };
+}
+
+function buildPricingReplyMessage(pricing) {
+  const lines = (pricing.breakdown?.entries || []).map((entry) =>
+    `${replyEntryLabel(entry)} = r${replyMoney(entry.lineTotal)}`
+  );
+  lines.push("");
+  lines.push(`T = r${replyMoney(pricing.totalPrice)}`);
+  return lines.join("\n");
+}
+
+function replyEntryLabel(entry) {
+  const mode = entry.gameMode || "";
+  const number = entry.originalNumber || entry.normalizedNumber || "";
+  let label = "";
+  if (mode === "DIRECT") {
+    label = number;
+  } else if (mode === "BOX") {
+    label = `${number} bx`;
+  } else {
+    label = `${mode}${number}`;
+  }
+
+  if (entry.expansionCount > 1 && mode !== "BOX") {
+    label += ` ${entry.units} units`;
+  } else {
+    label += ` ${entry.setCount || 1}s`;
+  }
+
+  if (Number(entry.unitPrice) !== 12) {
+    label += ` r${replyMoney(entry.unitPrice)}`;
+  }
+  return label.trim();
+}
+
+function replyMoney(value) {
+  return String(Math.round(Number(value || 0)));
+}
+
+function typingDelayForMessage(text) {
+  const chars = String(text || "").length;
+  const randomMs = 800 + Math.floor(Math.random() * 3400);
+  return Math.min(Math.max(1600 + chars * 55 + randomMs, 2500), 30000);
+}
+
+async function waitWithTyping(socket, remoteJid, delayMs) {
+  let remaining = delayMs;
+  while (remaining > 0) {
+    await socket.sendPresenceUpdate("composing", remoteJid);
+    const chunk = Math.min(remaining, 8000);
+    await wait(chunk);
+    remaining -= chunk;
+  }
+}
+
+async function markIncomingMessageRead(account, message) {
+  if (!message?.key?.id || !message.key.remoteJid) {
+    return;
+  }
+  const running = sockets.get(Number(account.id));
+  if (!isSocketConnected(running) || typeof running.socket.readMessages !== "function") {
+    return;
+  }
+  try {
+    await running.socket.readMessages([message.key]);
+    await storeListenerEvent({
+      account,
+      eventType: "message_marked_read",
+      detail: "read receipt sent",
+      messageId: message.key.id,
+      remoteJid: message.key.remoteJid || "",
+      senderJid: message.key.participant || message.key.remoteJid || ""
+    });
+  } catch (error) {
+    await storeListenerEvent({
+      account,
+      eventType: "message_mark_read_failed",
+      detail: error.message || "failed to mark message read",
+      messageId: message.key.id,
+      remoteJid: message.key.remoteJid || "",
+      senderJid: message.key.participant || message.key.remoteJid || ""
     });
   }
 }

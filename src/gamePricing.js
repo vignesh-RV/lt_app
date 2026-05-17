@@ -421,6 +421,8 @@ function rebuildEntryWithSetCount(entry, setCount) {
 function normalizeText(text) {
   return String(text || "")
     .replace(/(\d)\s*sR\s*(\d)/gi, "$1 Rs$2")
+    .replace(/\b(\d+(?:\.\d{1,2})?)\s*(rs\.?|inr|₹)\s*(boxs?)\b/gi, "$1$2 $3")
+    .replace(/\b(rs\.?|inr|₹)\s*(\d+(?:\.\d{1,2})?)\s*(boxs?)\b/gi, "$1$2 $3")
     .replace(/[.…]+/g, "-")
     .replace(/[–—]/g, "-")
     .replace(/\r/g, "\n");
@@ -435,7 +437,7 @@ function readContext(line) {
   if (prefixed) {
     return prefixed[1].toUpperCase();
   }
-  if (/\bboxs?\b|\bboxs?\d/i.test(line)) {
+  if (/\bboxs?\b|\bboxs?\d|\d\s*(?:rs\.?|inr|₹)\s*boxs?|\b(?:rs\.?|inr|₹)\s*\d+(?:\.\d{1,2})?\s*boxs?/i.test(line)) {
     return "BOX";
   }
   if (/^\s*all\b/i.test(line)) {
