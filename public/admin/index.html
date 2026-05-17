@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WA Plus Admin</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <section id="loginView" class="login-view">
+    <form id="loginForm" class="login-card">
+      <div class="brand">WA Plus Admin</div>
+      <h1>Sign in</h1>
+      <p>Manage WhatsApp listeners, bookings, and credit audit.</p>
+      <label>Username<input id="username" autocomplete="username" required></label>
+      <label>Password<input id="password" type="password" autocomplete="current-password" required></label>
+      <label id="totpLabel">Authenticator code<input id="totp" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></label>
+      <button type="submit">Sign in</button>
+      <div id="loginError" class="error"></div>
+    </form>
+  </section>
+
+  <main id="appView" class="app-view hidden">
+    <aside>
+      <div class="aside-brand">WA+</div>
+      <button class="tab active" data-tab="overview"><span class="nav-icon">O</span>Overview</button>
+      <button class="tab" data-tab="accounts"><span class="nav-icon">A</span>Accounts</button>
+      <button class="tab" data-tab="bookings"><span class="nav-icon">B</span>Bookings</button>
+      <button class="tab" data-tab="events"><span class="nav-icon">E</span>Events</button>
+      <button class="tab" data-tab="proofs"><span class="nav-icon">P</span>Proofs</button>
+      <button class="tab" data-tab="forwarding"><span class="nav-icon">F</span>Forwarding</button>
+      <button class="tab" data-tab="credits"><span class="nav-icon">C</span>Credits</button>
+      <button id="logout" class="logout">Logout</button>
+    </aside>
+
+    <section class="workspace">
+      <header>
+        <div>
+          <h1 id="pageTitle">Overview</h1>
+          <p id="pageSub">Production control for WhatsApp booking capture.</p>
+        </div>
+        <div class="refresh-box">
+          <span id="lastUpdated">Not updated</span>
+          <button id="refreshAll" class="icon-btn" title="Refresh">↻</button>
+        </div>
+      </header>
+
+      <section id="overview" class="panel active">
+        <div class="stats">
+          <div class="stat-card accounts"><span id="statAccounts">0</span><label>Accounts</label></div>
+          <div class="stat-card running"><span id="statRunning">0</span><label>Running</label></div>
+          <div class="stat-card bookings"><span id="statBookings">0</span><label>Bookings</label></div>
+          <div class="stat-card credits"><span id="statCredits">0</span><label>Credits</label></div>
+        </div>
+        <div class="chart-grid">
+          <div class="surface chart-panel">
+            <h2>Bookings by show</h2>
+            <div id="showChart" class="bar-chart"></div>
+          </div>
+          <div class="surface chart-panel">
+            <h2>Daily net</h2>
+            <div id="netChart" class="net-chart"></div>
+          </div>
+          <div class="surface chart-panel">
+            <h2>Proof status</h2>
+            <div id="proofChart" class="donut-row"></div>
+          </div>
+        </div>
+        <div class="split">
+          <div class="surface"><h2>Recent bookings</h2><div id="recentBookings"></div></div>
+          <div class="surface"><h2>Recent credits</h2><div id="recentCredits"></div></div>
+        </div>
+        <div class="surface stats-table">
+          <h2>Date-wise booking and winning stats</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Date</th><th>Show</th><th>Bookings</th><th>Booking Amt</th><th>Manual</th><th>Winners</th><th>Payout</th><th>Net</th></tr></thead>
+              <tbody id="statsRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="accounts" class="panel">
+        <div class="surface">
+          <h2>Add WhatsApp account</h2>
+          <div class="toolbar">
+            <input id="accountKey" placeholder="account key, e.g. main_shop">
+            <input id="displayName" placeholder="display name">
+            <input id="phoneNumber" placeholder="phone number">
+            <button id="addAccount">Add</button>
+          </div>
+        </div>
+        <div id="accountList" class="account-grid"></div>
+      </section>
+
+      <section id="bookings" class="panel">
+        <div class="surface">
+          <div class="toolbar">
+            <select id="bookingAccount"></select>
+            <select id="showCode">
+              <option value="">All shows</option>
+              <option value="1PM_DEAR">1PM Dear</option>
+              <option value="3PM_KL">3PM Kerala</option>
+          <option value="6PM_DEAR">6PM Dear</option>
+          <option value="8PM_DEAR">8PM Dear</option>
+          <option value="TEST_CAPTURE">Test capture</option>
+        </select>
+            <button id="loadBookings">Refresh</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Time</th><th>Account</th><th>Show</th><th>Mobile / From</th><th>Price</th><th>Forward</th><th>Message</th><th></th></tr></thead>
+              <tbody id="bookingRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="events" class="panel">
+        <div class="surface">
+          <div class="toolbar">
+            <select id="eventAccount"></select>
+            <button id="loadEvents">Refresh</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Time</th><th>Account</th><th>Type</th><th>Detail</th><th>Message</th></tr></thead>
+              <tbody id="eventRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="proofs" class="panel">
+        <div class="surface">
+          <div class="toolbar">
+            <select id="proofAccount"></select>
+            <button id="loadProofs">Refresh</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Time</th><th>Account</th><th>Mobile / From</th><th>Amount</th><th>Reference</th><th>Status</th><th>Forward</th><th>OCR Text</th></tr></thead>
+              <tbody id="proofRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="forwarding" class="panel">
+        <div class="surface">
+          <h2>Forward destinations</h2>
+          <div class="toolbar">
+            <select id="forwardAccount"></select>
+            <input id="forwardChatSearch" placeholder="Search loaded chats or groups">
+            <button id="loadForwardChats">Load chats</button>
+            <span id="forwardChatStatus" class="meta"></span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Show</th><th>Label</th><th>Chat or group</th><th>Enabled</th><th></th></tr></thead>
+              <tbody id="forwardRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="credits" class="panel">
+        <div class="surface">
+          <div class="toolbar"><button id="loadCredits">Refresh</button></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Time</th><th>Amount</th><th>Bank</th><th>Mobile / Device</th><th>Message</th><th></th></tr></thead>
+              <tbody id="creditRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>

@@ -4,9 +4,12 @@ import express from "express";
 import fs from "node:fs/promises";
 import multer from "multer";
 import { config } from "./config.js";
+import { adminDashboardRouter } from "./adminDashboardRoutes.js";
 import { closePool, query } from "./db.js";
 import { listCredits, upsertCredit } from "./creditsRepository.js";
 import { checkAppLicense } from "./licenseRepository.js";
+import { listListenerAccounts, upsertListenerAccount } from "./baileysRepository.js";
+import { getBaileysRuntimeStatus, startBaileysListeners } from "./baileysService.js";
 import { validateCreditPayload } from "./validateCredit.js";
 import {
   createOutboundMessage,
@@ -43,6 +46,8 @@ const seenSignedRequestNonces = new Map();
 const SIGNATURE_WINDOW_MS = 5 * 60 * 1000;
 
 app.use("/api", verifySignedRequest);
+app.use("/admin/api", adminDashboardRouter);
+app.use("/admin", express.static("public/admin"));
 
 app.get("/health", async (_req, res, next) => {
   try {
@@ -92,12 +97,101 @@ app.post("/api/app-license/check", async (req, res, next) => {
   }
 });
 
+app.post("/api/app-credit-health", async (req, res, next) => {
+  try {
+    const license = await checkAppLicense({
+      deviceId: req.body?.deviceId || "",
+      phoneNumbers: Array.isArray(req.body?.phoneNumbers) ? req.body.phoneNumbers : []
+    });
+    if (!license.allowed) {
+      res.status(403).json({ ok: false, mode: license.mode, reason: license.reason });
+      return;
+    }
+
+    res.json({
+      ok: true,
+      status: "connected",
+      creditApiConfigured: Boolean(license.creditApi?.baseUrl || license.creditApi?.path)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/credits", async (req, res, next) => {
   try {
     const requestedLimit = Number(req.query.limit || 50);
     const limit = Math.min(Math.max(Number.isFinite(requestedLimit) ? requestedLimit : 50, 1), 200);
     const credits = await listCredits(limit);
     res.json({ ok: true, credits });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/baileys/accounts", async (_req, res, next) => {
+  try {
+    const accounts = await listListenerAccounts();
+    res.json({
+      ok: true,
+      enabled: config.baileysEnabled,
+      runtime: getBaileysRuntimeStatus(),
+      accounts
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/app-whatsapp-health", async (req, res, next) => {
+  try {
+    const phoneNumbers = Array.isArray(req.body?.phoneNumbers) ? req.body.phoneNumbers : [];
+    const license = await checkAppLicense({
+      deviceId: req.body?.deviceId || "",
+      phoneNumbers
+    });
+    if (!license.allowed) {
+      res.status(403).json({ ok: false, mode: license.mode, reason: license.reason, accounts: [] });
+      return;
+    }
+
+    const normalizedPhones = new Set(phoneNumbers.map(normalizeHealthPhone).filter(Boolean));
+    const runtime = getBaileysRuntimeStatus();
+    const runtimeIds = new Set(runtime.map((item) => String(item.accountId)));
+    const accounts = (await listListenerAccounts())
+      .filter((account) => normalizedPhones.has(normalizeHealthPhone(account.phoneNumber)))
+      .map((account) => ({
+        accountKey: account.accountKey,
+        displayName: account.displayName,
+        phoneNumber: account.phoneNumber,
+        lastStatus: account.lastStatus,
+        listenEnabled: account.listenEnabled,
+        testCaptureEnabled: account.testCaptureEnabled,
+        connectedJid: account.connectedJid,
+        lastSeenAt: account.lastSeenAt,
+        runtimeActive: runtimeIds.has(String(account.id))
+      }));
+
+    res.json({ ok: true, accounts });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/baileys/accounts", async (req, res, next) => {
+  try {
+    const account = await upsertListenerAccount({
+      accountKey: req.body?.accountKey,
+      displayName: req.body?.displayName || "",
+      phoneNumber: req.body?.phoneNumber || ""
+    });
+    res.status(201).json({
+      ok: true,
+      account,
+      note: config.baileysEnabled
+        ? "Restart the API to start this account listener."
+        : "Account saved. Set BAILEYS_ENABLED=true and restart the API to start listening."
+    });
   } catch (error) {
     next(error);
   }
@@ -334,6 +428,9 @@ app.use((error, _req, res, _next) => {
 
 const server = app.listen(config.port, () => {
   console.log(`WA Bank Monitor API listening on http://localhost:${config.port}`);
+  startBaileysListeners().catch((error) => {
+    console.error("Baileys listener startup failed", error);
+  });
 });
 
 async function shutdown() {
@@ -612,6 +709,14 @@ function cleanupSignedRequestNonces() {
       seenSignedRequestNonces.delete(key);
     }
   }
+}
+
+function normalizeHealthPhone(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (!digits) {
+    return "";
+  }
+  return digits.length > 10 && digits.startsWith("91") ? digits.slice(-10) : digits;
 }
 
 function timingSafeEqual(actual, expected) {

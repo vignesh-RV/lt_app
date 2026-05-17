@@ -8,7 +8,7 @@ export function parsePaymentProofText(rawText) {
   const text = normalize(rawText);
   const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
 
-  const amount = extractAmount(text);
+  const amount = extractAmount(text, lines);
   const status = extractStatus(text);
   const transactionId = extractTransactionId(text);
   const utr = extractUtr(text);
@@ -39,7 +39,9 @@ export function parsePaymentProofText(rawText) {
 function normalize(value) {
   return String(value || "")
     .replace(/\r/g, "\n")
-    .replace(/[₹¥]/g, "Rs ")
+    .replace(/[₹â‚¹Â¥]/g, "Rs ")
+    .replace(/~\s*(?=\d)/g, "Rs ")
+    .replace(/%\s*(?=\d)/g, "Rs ")
     .replace(/[ \t]+/g, " ");
 }
 
@@ -57,19 +59,46 @@ function extractStatus(text) {
   return "unknown";
 }
 
-function extractAmount(text) {
-  const matches = [...text.matchAll(/(?:\b(?:Rs\.?|INR)\s*|[?]\s*|[-=]\s*)([0-9][0-9,]*(?:\.[0-9]{1,2})?)\b/gi)];
-  if (matches.length === 0) {
+function extractAmount(text, lines) {
+  const currencyPattern = /(?:\b(?:Rs\.?|INR)\s*|[?]\s*)([0-9][0-9,]*(?:\.[0-9]{1,2})?)\b/i;
+  const amountLine = lines.find((line) =>
+    !/\b(ref|reference|txn|transaction|utr|bank|account|seconds?)\b/i.test(line)
+      && currencyPattern.test(line)
+  );
+  if (amountLine) {
+    return amountLine.match(currencyPattern)[1].replace(/,/g, "");
+  }
+
+  const ocrCurrencyAmount = extractOcrCurrencyAmount(lines);
+  if (ocrCurrencyAmount) {
+    return ocrCurrencyAmount;
+  }
+
+  const labeled = text.match(/\b(?:amount|paid|received|sent)\b[^0-9\n]{0,30}([0-9][0-9,]*(?:\.[0-9]{1,2})?)\b/i);
+  return labeled ? labeled[1].replace(/,/g, "") : "";
+}
+
+function extractOcrCurrencyAmount(lines) {
+  const firstAmountLine = lines.find((line) => /^[0-9][0-9,]*(?:\.[0-9]{1,2})?$/.test(line));
+  if (!firstAmountLine) {
     return "";
   }
-  return matches[0][1].replace(/,/g, "");
+
+  const normalized = firstAmountLine.replace(/,/g, "");
+  const leadingTwo = normalized.match(/^2([1-9][0-9]{2})(?:\.00)?$/);
+  if (leadingTwo && lines.some((line) => /\bpaid to\b/i.test(line))) {
+    return leadingTwo[1];
+  }
+
+  return normalized;
 }
 
 function extractTransactionId(text) {
   const patterns = [
     /\bTransaction\s*ID\s*[:\-]?\s*([A-Z]?[0-9A-Z]{8,})\b/i,
     /\bUPI\s*txn\s*ID\s*[:\-]?\s*([0-9A-Z]{6,})\b/i,
-    /\bTxn\s*ID\s*[:\-]?\s*([0-9A-Z]{6,})\b/i
+    /\bTxn\s*ID\s*[:\-]?\s*([0-9A-Z]{6,})\b/i,
+    /\bRef\s*No\.?\s*[:\-]?\s*([0-9A-Z]{6,})\b/i
   ];
   for (const pattern of patterns) {
     const match = text.match(pattern);
@@ -153,8 +182,8 @@ function extractAppName(text) {
 
 function stripAmount(value) {
   return value
-    .replace(/(?:\b(?:Rs\.?|INR)\s*|[?]\s*|[-=]\s*)[0-9][0-9,]*(?:\.[0-9]{1,2})?\b/gi, "")
-    .replace(/[•:]/g, " ")
+    .replace(/(?:\b(?:Rs\.?|INR)\s*|[?]\s*)[0-9][0-9,]*(?:\.[0-9]{1,2})?\b/gi, "")
+    .replace(/[â€¢:]/g, " ")
     .replace(/[=\-\s]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();

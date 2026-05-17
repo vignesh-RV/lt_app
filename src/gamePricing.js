@@ -6,7 +6,7 @@ const SHOWS = [
   { code: "6PM_DEAR", label: "6PM Dear", market: "Dear", hour: 18, minute: 0 },
   { code: "8PM_DEAR", label: "8PM Dear", market: "Dear", hour: 20, minute: 0 }
 ];
-const COMPACT_PREDICTION_RE = /\b(?:(AB|BC|AC|A|B|C)\s*)?(\d{1,4})\s*=\s*(\d{1,3})\s*(?:sets|set|sef|s)?\b/gi;
+const COMPACT_PREDICTION_RE = /\b(?:(AB|BC|AC|A|B|C)\s*)?(\d{1,4})\s*[=_]\s*(\d{1,3})\s*(?:sets|set|sef|s)?\b/gi;
 
 const PRICE_RE = /\b(?:rs\.?|inr|₹)\s*([0-9]+(?:\.[0-9]{1,2})?)\b/i;
 const TRAILING_PRICE_RE = /\b([0-9]+(?:\.[0-9]{1,2})?)\s*(?:rs\.?|inr|₹)\b/i;
@@ -178,8 +178,7 @@ export async function calculatePredictionPricing(rawText, receivedAt = new Date(
 export function parsePredictionEntries(rawText) {
   const lines = normalizeText(rawText)
     .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
+    .map((line) => line.trim());
 
   const entries = [];
   let pending = [];
@@ -188,6 +187,16 @@ export function parsePredictionEntries(rawText) {
   let activeContextEntryStart = 0;
 
   for (const line of lines) {
+    if (!line) {
+      if (pending.length > 0) {
+        entries.push(...materializeEntries(pending, currentPrice));
+        pending = [];
+      }
+      currentMode = "";
+      activeContextEntryStart = entries.length;
+      continue;
+    }
+
     const context = readContext(line);
     if (context) {
       currentMode = context;
@@ -206,6 +215,16 @@ export function parsePredictionEntries(rawText) {
       for (let i = activeContextEntryStart; i < entries.length; i++) {
         if (!entries[i].explicitUnits) {
           entries[i] = rebuildEntryWithSetCount(entries[i], eachSet);
+        }
+      }
+      continue;
+    }
+
+    if (explicitSet !== null && numbers.length === 0) {
+      pending = pending.map((entry) => entry.explicitUnits ? entry : { ...entry, setCount: explicitSet });
+      for (let i = activeContextEntryStart; i < entries.length; i++) {
+        if (!entries[i].explicitUnits) {
+          entries[i] = rebuildEntryWithSetCount(entries[i], explicitSet);
         }
       }
       continue;
@@ -340,6 +359,9 @@ function expandEntry(entry, unitPrice) {
   }
 
   if (mode === "BOX") {
+    if (digitCount === 1) {
+      return [buildEntry(entry, unitPrice, 1, "BOX", ["A", "B", "C"], [entry.number], 1)];
+    }
     if (digitCount === 2) {
       return [buildEntry(entry, unitPrice, 2, "BOX", ["AB", "AC", "BC"], [entry.number], 3)];
     }
@@ -409,7 +431,11 @@ function readContext(line) {
   if (compact) {
     return compact[1].toUpperCase();
   }
-  if (/\bboxs?\b/i.test(line)) {
+  const prefixed = line.match(/\b(AB|BC|AC|A|B|C)\s*\d{1,4}\b/i);
+  if (prefixed) {
+    return prefixed[1].toUpperCase();
+  }
+  if (/\bboxs?\b|\bboxs?\d/i.test(line)) {
     return "BOX";
   }
   if (/^\s*all\b/i.test(line)) {
@@ -425,7 +451,7 @@ function readPrice(line) {
 }
 
 function readSetQuantity(line) {
-  const match = line.match(/\b([0-9]+)\W{0,4}sets?\b/i);
+  const match = line.match(/\b([0-9]+)\W{0,4}(?:sets?|sef|s)\b/i);
   return match ? Number(match[1]) : null;
 }
 
@@ -439,6 +465,22 @@ function readNumbers(line, price) {
 }
 
 function readPredictions(line, price) {
+  const compactBox = line.match(/^\s*boxs?\s*(\d{1,4}(?:\s*,\s*\d{1,4})*)\s*[-=]\s*(\d{1,3})\s*(?:sets|set|sef|s)?\s*$/i);
+  if (compactBox) {
+    return compactBox[1]
+      .split(/\s*,\s*/)
+      .filter(Boolean)
+      .map((number) => ({ mode: "BOX", number, setCount: Number(compactBox[2]), explicitUnits: true }));
+  }
+
+  const boxList = line.match(/^\s*boxs?\s*(\d{1,4}(?:\s*,\s*\d{1,4})*)\s*$/i);
+  if (boxList) {
+    return boxList[1]
+      .split(/\s*,\s*/)
+      .filter(Boolean)
+      .map((number) => ({ mode: "BOX", number, setCount: 1, explicitUnits: false }));
+  }
+
   const compactPredictions = [];
   let cleaned = line.replace(COMPACT_PREDICTION_RE, (_match, mode, number, setCount) => {
     compactPredictions.push({
@@ -454,6 +496,20 @@ function readPredictions(line, price) {
     return compactPredictions;
   }
 
+  const tokenPredictions = [];
+  cleaned = cleaned.replace(/\b(AB|BC|AC|A|B|C)?\s*(\d{1,4})(?=\s*[-,_]|$)/gi, (match, mode, number) => {
+    if (mode || tokenPredictions.length > 0) {
+      tokenPredictions.push({
+        mode: mode ? mode.toUpperCase() : "",
+        number,
+        setCount: 1,
+        explicitUnits: false
+      });
+      return " ";
+    }
+    return match;
+  });
+
   cleaned = cleaned
     .replace(/\b(?:rs\.?|inr)\s*\d+(?:\.\d{1,2})?\b/gi, " ")
     .replace(/\b\d+(?:\.\d{1,2})?\s*(?:rs\.?|inr)\b/gi, " ")
@@ -461,7 +517,7 @@ function readPredictions(line, price) {
     .replace(TRAILING_PRICE_RE, " ")
     .replace(/\b\d{1,2}\s*(?:am|pm)\b/gi, " ")
     .replace(/\b[1-4]\s*(?:digit|digital|board)\b/gi, " ")
-    .replace(/\b[0-9]+\W{0,4}sets?\b/gi, " ")
+    .replace(/\b[0-9]+\W{0,4}(?:sets?|sef|s)\b/gi, " ")
     .replace(/\beach\b/gi, " ")
     .replace(/\b(?:boxs?|all|ab|bc|ac|single|board|digit|rs|inr|kl|dear|dr)\b/gi, " ");
 
@@ -469,13 +525,14 @@ function readPredictions(line, price) {
     cleaned = cleaned.replace(new RegExp(`\\b${price}\\b`), " ");
   }
 
-  const pair = cleaned.trim().match(/^(\d{1,4})\s*[-,]\s*(\d{1,3})$/);
+  const pair = cleaned.trim().match(/^(\d{1,4})\s*[-,_]\s*(\d{1,3})$/);
   if (pair) {
     return [...compactPredictions, { mode: "", number: pair[1], setCount: Number(pair[2]), explicitUnits: true }];
   }
 
   return [
     ...compactPredictions,
+    ...tokenPredictions,
     ...(cleaned.match(/\b\d{1,4}\b/g) || []).map((number) => ({ mode: "", number, setCount: 1, explicitUnits: false }))
   ];
 }
@@ -616,6 +673,7 @@ function analyzePricingFormat(text) {
 function isKnownPricingToken(token) {
   const cleaned = token
     .replace(/^[*#\-:;|]+|[*#\-:;|]+$/g, "")
+    .replace(/[.\u2026]+$/g, "")
     .replace(/[.\u2026]+/g, "-")
     .trim();
   if (!cleaned) {
@@ -627,7 +685,7 @@ function isKnownPricingToken(token) {
   if (/^(?:rs\.?|inr|\u20b9)?\d{1,4}(?:\.\d{1,2})?(?:rs\.?|inr)?$/i.test(cleaned)) {
     return true;
   }
-  if (/^\d{1,4}[-,]\d{1,3}$/.test(cleaned)) {
+  if (/^\d{1,4}[-,_]\d{1,3}$/.test(cleaned)) {
     return true;
   }
   if (/^\d{1,4}-+\d{1,3}(?:sets?|rs\.?|inr)?$/i.test(cleaned)) {
@@ -636,7 +694,10 @@ function isKnownPricingToken(token) {
   if (/^\d{1,3}sets?$/i.test(cleaned)) {
     return true;
   }
-  if (/^(?:(?:ab|bc|ac|a|b|c)\s*)?\d{1,4}=\d{1,3}(?:s|set|sets|sef)?$/i.test(cleaned)) {
+  if (/^\d{1,3}(?:s|sef)$/i.test(cleaned)) {
+    return true;
+  }
+  if (/^(?:(?:ab|bc|ac|a|b|c)\s*)?\d{1,4}[=_]\d{1,3}(?:s|set|sets|sef)?$/i.test(cleaned)) {
     return true;
   }
   if (/^(?:ab|bc|ac|a|b|c)\d{1,4}$/i.test(cleaned) || /^=\d{1,3}(?:s|set|sets|sef)?$/i.test(cleaned)) {
@@ -649,6 +710,9 @@ function isKnownPricingToken(token) {
     return true;
   }
   if (/^boxs?-+\d{1,3}-+sets?$/i.test(cleaned)) {
+    return true;
+  }
+  if (/^boxs?\d{1,4}(?:,\d{1,4})*[-=]\d{1,3}(?:sets|set|sef|s)?$/i.test(cleaned)) {
     return true;
   }
   if (/^[abc]{1,2}$/i.test(cleaned)) {

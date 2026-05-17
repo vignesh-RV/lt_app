@@ -17,7 +17,9 @@ export async function checkAppLicense({ deviceId = "", phoneNumbers = [] }) {
         normalized_mobile AS "normalizedMobile",
         device_id AS "deviceId",
         status,
-        expires_at AS "expiresAt"
+        expires_at AS "expiresAt",
+        credit_api_base_url AS "creditApiBaseUrl",
+        credit_api_path AS "creditApiPath"
       FROM app_licenses
       WHERE normalized_mobile = ANY($1::TEXT[])
         OR ($2 <> '' AND device_id = $2)
@@ -61,7 +63,11 @@ export async function checkAppLicense({ deviceId = "", phoneNumbers = [] }) {
     allowed: true,
     mode: "full",
     reason: "Licensed.",
-    license
+    license,
+    creditApi: {
+      baseUrl: license.creditApiBaseUrl || null,
+      path: license.creditApiPath || "/api/credits"
+    }
   };
 }
 
