@@ -6,6 +6,7 @@ import { listCredits } from "./creditsRepository.js";
 import { query } from "./db.js";
 import {
   deleteInboundWhatsappMessage,
+  deleteListenerAccount,
   getListenerAccountById,
   listForwardTargets,
   listBookingStats,
@@ -98,6 +99,25 @@ adminDashboardRouter.post("/accounts", async (req, res, next) => {
       phoneNumber: req.body?.phoneNumber || ""
     });
     res.status(201).json({ ok: true, account });
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminDashboardRouter.delete("/accounts/:id", async (req, res, next) => {
+  try {
+    const accountId = Number(req.params.id);
+    try {
+      await stopBaileysAccount(accountId);
+    } catch {
+      // Deleting should still work when the socket is already gone or never started.
+    }
+    const account = await deleteListenerAccount(accountId);
+    if (!account) {
+      res.status(404).json({ ok: false, error: "Account not found." });
+      return;
+    }
+    res.json({ ok: true, account });
   } catch (error) {
     next(error);
   }

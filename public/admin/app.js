@@ -203,10 +203,31 @@ function accountQrHtml(account) {
 }
 
 function normalizeAccountActionIcons(root) {
-  root.querySelectorAll('button[title="Start listener"]').forEach((button) => { button.textContent = "\u25b6"; });
-  root.querySelectorAll('button[title="Stop listener"]').forEach((button) => { button.textContent = "\u25a0"; });
-  root.querySelectorAll('button[title="Show QR"]').forEach((button) => { button.textContent = "\u25a6"; });
-  root.querySelectorAll('button[title="Start test capture"], button[title="Stop test capture"]').forEach((button) => { button.textContent = "\u25cf"; });
+  const icons = [
+    ['button[title="Start listener"]', "play"],
+    ['button[title="Stop listener"]', "stop"],
+    ['button[title="Show QR"]', "qr"],
+    ['button[title="Start test capture"], button[title="Stop test capture"]', "capture"]
+  ];
+  icons.forEach(([selector, icon]) => {
+    root.querySelectorAll(selector).forEach((button) => {
+      button.dataset.icon = icon;
+      button.textContent = "";
+    });
+  });
+  root.querySelectorAll(".account-card").forEach((card) => {
+    const actions = card.querySelector(".actions");
+    const accountId = Number(String(card.id || "").replace("account-", ""));
+    if (!actions || !accountId || actions.querySelector('[title="Delete account"]')) {
+      return;
+    }
+    const button = document.createElement("button");
+    button.className = "icon-btn danger";
+    button.dataset.icon = "delete";
+    button.title = "Delete account";
+    button.onclick = () => deleteAccount(accountId);
+    actions.appendChild(button);
+  });
 }
 
 function listeningBadge(account) {
@@ -239,6 +260,17 @@ async function stopAccount(id) {
   delete state.qrByAccountId[String(id)];
   await api(`/accounts/${id}/stop`, { method: "POST" });
   refreshAll();
+}
+
+async function deleteAccount(id) {
+  const account = state.accounts.find((item) => Number(item.id) === Number(id));
+  const name = account?.displayName || account?.accountKey || "this account";
+  if (!confirm(`Hide ${name} from Accounts? Existing bookings, events, chats, and balances will be kept.`)) {
+    return;
+  }
+  delete state.qrByAccountId[String(id)];
+  await api(`/accounts/${id}`, { method: "DELETE" });
+  await refreshAll();
 }
 
 async function showQr(id) {

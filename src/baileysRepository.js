@@ -19,7 +19,8 @@ export async function listListenerAccounts({ activeOnly = false } = {}) {
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM whatsapp_listener_accounts
-      WHERE ($1::BOOLEAN = FALSE OR (is_active = TRUE AND listen_enabled = TRUE))
+      WHERE is_active = TRUE
+        AND ($1::BOOLEAN = FALSE OR listen_enabled = TRUE)
       ORDER BY id ASC
     `,
     [activeOnly]
@@ -56,6 +57,29 @@ export async function upsertListenerAccount({ accountKey, displayName = "", phon
     [safeKey, displayName, phoneNumber]
   );
   return result.rows[0];
+}
+
+export async function deleteListenerAccount(accountId) {
+  const result = await query(
+    `
+      UPDATE whatsapp_listener_accounts
+      SET
+        is_active = FALSE,
+        listen_enabled = FALSE,
+        test_capture_enabled = FALSE,
+        last_status = 'deleted',
+        latest_qr = '',
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING
+        id,
+        account_key AS "accountKey",
+        display_name AS "displayName",
+        phone_number AS "phoneNumber"
+    `,
+    [accountId]
+  );
+  return result.rows[0] || null;
 }
 
 export async function getListenerAccountById(accountId) {

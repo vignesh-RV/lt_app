@@ -57,6 +57,52 @@ button.secondary {
   font-weight: 900;
   letter-spacing: 0;
 }
+.icon-btn[data-icon] {
+  position: relative;
+}
+.icon-btn[data-icon]::before,
+.icon-btn[data-icon]::after {
+  content: "";
+  display: block;
+  background: currentColor;
+}
+.icon-btn[data-icon="play"]::before {
+  width: 14px;
+  height: 14px;
+  clip-path: polygon(20% 8%, 20% 92%, 90% 50%);
+}
+.icon-btn[data-icon="stop"]::before {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+.icon-btn[data-icon="qr"]::before {
+  width: 15px;
+  height: 15px;
+  background:
+    linear-gradient(currentColor 0 0) left top / 6px 6px no-repeat,
+    linear-gradient(currentColor 0 0) right top / 6px 6px no-repeat,
+    linear-gradient(currentColor 0 0) left bottom / 6px 6px no-repeat,
+    linear-gradient(currentColor 0 0) right bottom / 4px 4px no-repeat;
+}
+.icon-btn[data-icon="capture"]::before {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+.icon-btn[data-icon="delete"]::before,
+.icon-btn[data-icon="delete"]::after {
+  position: absolute;
+  width: 15px;
+  height: 2px;
+  border-radius: 999px;
+}
+.icon-btn[data-icon="delete"]::before {
+  transform: rotate(45deg);
+}
+.icon-btn[data-icon="delete"]::after {
+  transform: rotate(-45deg);
+}
 .hidden { display: none !important; }
 
 .login-view {
