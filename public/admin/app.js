@@ -461,9 +461,19 @@ function renderEventRows() {
       <td>${escapeHtml(item.accountKey)}</td>
       <td>${eventBadge(item.eventType)}</td>
       <td>${escapeHtml(item.detail)}</td>
-      <td class="message">${escapeHtml(item.messageText || item.messageId || "")}</td>
+      <td class="message">${eventMessageCell(item)}</td>
     </tr>
   `).join("") || `<tr><td colspan="5">No listener events yet.</td></tr>`;
+}
+
+function eventMessageCell(item) {
+  if (item.messageText) {
+    return escapeHtml(item.messageText);
+  }
+  if (item.messageId) {
+    return `<span class="meta">Msg ID: ${escapeHtml(item.messageId)}</span>`;
+  }
+  return "";
 }
 
 async function loadProofs() {

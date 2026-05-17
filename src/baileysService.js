@@ -359,6 +359,7 @@ async function captureMessageIfInWindow(account, message) {
   const receivedAt = message.messageTimestamp
     ? new Date(Number(message.messageTimestamp) * 1000)
     : new Date();
+  const messageText = extractMessageText(message.message);
   const window = activeBookingWindow(receivedAt);
   if (!window.active && !account.testCaptureEnabled) {
     await storeListenerEvent({
@@ -367,8 +368,10 @@ async function captureMessageIfInWindow(account, message) {
       detail: "outside booking window and test capture is off",
       messageId: message.key.id,
       remoteJid: message.key.remoteJid || "",
-      senderJid: message.key.participant || message.key.remoteJid || ""
+      senderJid: message.key.participant || message.key.remoteJid || "",
+      messageText: messageText || mediaMessageLabel(message.message)
     });
+    await markIncomingMessageRead(account, message);
     return;
   }
 
@@ -377,7 +380,6 @@ async function captureMessageIfInWindow(account, message) {
     return;
   }
 
-  const messageText = extractMessageText(message.message);
   if (!messageText) {
     await storeListenerEvent({
       account,
@@ -385,8 +387,10 @@ async function captureMessageIfInWindow(account, message) {
       detail: "no text/caption found",
       messageId: message.key.id,
       remoteJid: message.key.remoteJid || "",
-      senderJid: message.key.participant || message.key.remoteJid || ""
+      senderJid: message.key.participant || message.key.remoteJid || "",
+      messageText: mediaMessageLabel(message.message)
     });
+    await markIncomingMessageRead(account, message);
     return;
   }
 
@@ -1141,6 +1145,15 @@ function extractMessageText(message = {}) {
     || message.imageMessage?.caption
     || message.videoMessage?.caption
     || "";
+}
+
+function mediaMessageLabel(message = {}) {
+  if (message.imageMessage) return "[image]";
+  if (message.videoMessage) return "[video]";
+  if (message.documentMessage) return `[document] ${message.documentMessage.fileName || ""}`.trim();
+  if (message.audioMessage) return "[audio]";
+  if (message.stickerMessage) return "[sticker]";
+  return "";
 }
 
 function wait(ms) {
