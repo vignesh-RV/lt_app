@@ -28,6 +28,7 @@
       <button class="tab" data-tab="bookings"><span class="nav-icon">B</span>Bookings</button>
       <button class="tab" data-tab="events"><span class="nav-icon">E</span>Events</button>
       <button class="tab" data-tab="proofs"><span class="nav-icon">P</span>Proofs</button>
+      <button class="tab" data-tab="support"><span class="nav-icon">S</span>Support</button>
       <button class="tab" data-tab="forwarding"><span class="nav-icon">F</span>Forwarding</button>
       <button class="tab" data-tab="credits"><span class="nav-icon">C</span>Credits</button>
       <button id="logout" class="logout">Logout</button>
@@ -142,6 +143,40 @@
             <table>
               <thead><tr><th>Time</th><th>Account</th><th>Mobile / From</th><th>Amount</th><th>Reference</th><th>Status</th><th>Forward</th><th>OCR Text</th></tr></thead>
               <tbody id="proofRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="support" class="panel">
+        <div class="surface">
+          <div class="toolbar">
+            <select id="supportAccount"></select>
+            <button id="loadSupport">Refresh</button>
+          </div>
+          <div class="stats compact-stats">
+            <div class="stat-card bookings"><span id="supportSuccess">0</span><label>Successful</label></div>
+            <div class="stat-card credits"><span id="supportMissing">0</span><label>Payment missing</label></div>
+            <div class="stat-card running"><span id="supportBalance">0</span><label>With balance</label></div>
+            <div class="stat-card accounts"><span id="supportManual">0</span><label>Manual support</label></div>
+          </div>
+        </div>
+        <div class="split support-split">
+          <div class="surface">
+            <h2>Customer support queue</h2>
+            <div id="supportQueue"></div>
+          </div>
+          <div class="surface">
+            <h2>Customer balances</h2>
+            <div id="supportBalances"></div>
+          </div>
+        </div>
+        <div class="surface stats-table">
+          <h2>Agent booking summary</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Agent</th><th>Customers</th><th>Bookings</th><th>Amount</th><th>Success</th><th>Payment missing</th><th>Manual</th></tr></thead>
+              <tbody id="supportAgentRows"></tbody>
             </table>
           </div>
         </div>

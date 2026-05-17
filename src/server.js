@@ -8,7 +8,7 @@ import { adminDashboardRouter } from "./adminDashboardRoutes.js";
 import { closePool, query } from "./db.js";
 import { listCredits, upsertCredit } from "./creditsRepository.js";
 import { checkAppLicense } from "./licenseRepository.js";
-import { listListenerAccounts, upsertListenerAccount } from "./baileysRepository.js";
+import { listListenerAccounts, listSupportSummary, upsertListenerAccount } from "./baileysRepository.js";
 import { getBaileysRuntimeStatus, startBaileysListeners } from "./baileysService.js";
 import { validateCreditPayload } from "./validateCredit.js";
 import {
@@ -173,6 +173,30 @@ app.post("/api/app-whatsapp-health", async (req, res, next) => {
       }));
 
     res.json({ ok: true, accounts });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/app-support-summary", async (req, res, next) => {
+  try {
+    const phoneNumbers = Array.isArray(req.body?.phoneNumbers) ? req.body.phoneNumbers : [];
+    const license = await checkAppLicense({
+      deviceId: req.body?.deviceId || "",
+      phoneNumbers
+    });
+    if (!license.allowed) {
+      res.status(403).json({ ok: false, mode: license.mode, reason: license.reason, kpis: {} });
+      return;
+    }
+    const normalizedPhones = new Set(phoneNumbers.map(normalizeHealthPhone).filter(Boolean));
+    const account = (await listListenerAccounts())
+      .find((item) => normalizedPhones.has(normalizeHealthPhone(item.phoneNumber)));
+    if (!account) {
+      res.json({ ok: true, kpis: {}, support: [], balances: [], agents: [] });
+      return;
+    }
+    res.json({ ok: true, ...(await listSupportSummary({ accountId: account.id, limit: 50 })) });
   } catch (error) {
     next(error);
   }

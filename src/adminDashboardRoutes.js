@@ -9,6 +9,7 @@ import {
   getListenerAccountById,
   listForwardTargets,
   listBookingStats,
+  listSupportSummary,
   listInboundWhatsappMessages,
   listListenerEvents,
   listListenerAccounts,
@@ -178,6 +179,20 @@ adminDashboardRouter.get("/booking-stats", async (req, res, next) => {
     res.json({
       ok: true,
       stats: await listBookingStats({ days: Number(req.query.days || 14) })
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminDashboardRouter.get("/support-summary", async (req, res, next) => {
+  try {
+    res.json({
+      ok: true,
+      ...(await listSupportSummary({
+        accountId: Number(req.query.accountId || 0),
+        limit: Number(req.query.limit || 200)
+      }))
     });
   } catch (error) {
     next(error);

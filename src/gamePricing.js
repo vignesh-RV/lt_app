@@ -458,7 +458,7 @@ function readSetQuantity(line) {
 }
 
 function readEachSetQuantity(line) {
-  const match = line.match(/\beach\s*([0-9]+)\W{0,4}sets?\b/i);
+  const match = line.match(/\b(?:each|e)\s*([0-9]+)\W{0,4}(?:sets?|sef|s)\b/i);
   return match ? Number(match[1]) : null;
 }
 
@@ -520,6 +520,7 @@ function readPredictions(line, price) {
     .replace(/\b\d{1,2}\s*(?:am|pm)\b/gi, " ")
     .replace(/\b[1-4]\s*(?:digit|digital|board)\b/gi, " ")
     .replace(/\b[0-9]+\W{0,4}(?:sets?|sef|s)\b/gi, " ")
+    .replace(/\b(?:each|e)\s*[0-9]+\W{0,4}(?:sets?|sef|s)\b/gi, " ")
     .replace(/\beach\b/gi, " ")
     .replace(/\b(?:boxs?|all|ab|bc|ac|single|board|digit|rs|inr|kl|dear|dr)\b/gi, " ");
 
@@ -687,6 +688,9 @@ function isKnownPricingToken(token) {
   if (/^(?:rs\.?|inr|\u20b9)?\d{1,4}(?:\.\d{1,2})?(?:rs\.?|inr)?$/i.test(cleaned)) {
     return true;
   }
+  if (/^(?:\d+(?:\.\d{1,2})?(?:rs\.?|inr|\u20b9)|(?:rs\.?|inr|\u20b9)\d+(?:\.\d{1,2})?)boxs?$/i.test(cleaned)) {
+    return true;
+  }
   if (/^\d{1,4}[-,_]\d{1,3}$/.test(cleaned)) {
     return true;
   }
@@ -697,6 +701,9 @@ function isKnownPricingToken(token) {
     return true;
   }
   if (/^\d{1,3}(?:s|sef)$/i.test(cleaned)) {
+    return true;
+  }
+  if (/^e\d{1,3}(?:s|set|sets|sef)$/i.test(cleaned)) {
     return true;
   }
   if (/^(?:(?:ab|bc|ac|a|b|c)\s*)?\d{1,4}[=_]\d{1,3}(?:s|set|sets|sef)?$/i.test(cleaned)) {

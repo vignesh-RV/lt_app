@@ -337,16 +337,18 @@ export async function listWhatsappChats({ accountId, search = "", limit = 300 })
   return result.rows;
 }
 
-export async function findForwardableBookingForProof({ accountId, remoteJid, senderJid, amount, receivedAt }) {
+export async function listForwardableBookingsForProof({ accountId, remoteJid, senderJid, showCode = "", receivedAt }) {
   const result = await query(
     `
       SELECT
         m.id,
         m.account_id AS "accountId",
         m.account_key AS "accountKey",
+        m.message_id AS "messageId",
         m.remote_jid AS "remoteJid",
         m.sender_jid AS "senderJid",
         m.push_name AS "pushName",
+        m.message_json AS "messageJson",
         m.message_text AS "messageText",
         m.show_code AS "showCode",
         m.calculated_price::TEXT AS "calculatedPrice",
@@ -361,7 +363,7 @@ export async function findForwardableBookingForProof({ accountId, remoteJid, sen
         AND m.forwarded_at IS NULL
         AND m.manual_work = FALSE
         AND m.calculated_price IS NOT NULL
-        AND m.calculated_price <= $4
+        AND ($4::TEXT = '' OR m.show_code = $4)
         AND m.received_at <= $5
         AND (
           m.remote_jid = $2
@@ -369,12 +371,16 @@ export async function findForwardableBookingForProof({ accountId, remoteJid, sen
           OR m.remote_jid = $3
           OR m.sender_jid = $3
         )
-      ORDER BY m.received_at DESC
-      LIMIT 1
+      ORDER BY m.received_at ASC, m.id ASC
     `,
-    [accountId, remoteJid || "", senderJid || "", amount || 0, receivedAt]
+    [accountId, remoteJid || "", senderJid || "", showCode || "", receivedAt]
   );
-  return result.rows[0] || null;
+  return result.rows;
+}
+
+export async function findForwardableBookingForProof(input) {
+  const rows = await listForwardableBookingsForProof(input);
+  return rows[rows.length - 1] || null;
 }
 
 export async function markBookingForwarded({ bookingId, paymentProofId, destinationJid }) {
@@ -404,6 +410,89 @@ export async function markPaymentProofForwardResult({ proofId, bookingId = null,
     `,
     [proofId, bookingId, Boolean(forwarded), error || ""]
   );
+}
+
+export async function addCustomerPaymentBalance({
+  accountId,
+  remoteJid = "",
+  senderJid = "",
+  showCode = "",
+  amount = 0,
+  paymentProofId = null
+}) {
+  const result = await query(
+    `
+      INSERT INTO whatsapp_customer_payment_balances (
+        account_id,
+        remote_jid,
+        sender_jid,
+        show_code,
+        balance_amount,
+        last_payment_proof_id
+      )
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (account_id, remote_jid, sender_jid, show_code)
+      DO UPDATE SET
+        balance_amount = whatsapp_customer_payment_balances.balance_amount + EXCLUDED.balance_amount,
+        last_payment_proof_id = EXCLUDED.last_payment_proof_id,
+        updated_at = NOW()
+      RETURNING balance_amount::TEXT AS "balanceAmount"
+    `,
+    [accountId, remoteJid || "", senderJid || "", showCode || "", amount || 0, paymentProofId]
+  );
+  return Number(result.rows[0]?.balanceAmount || 0);
+}
+
+export async function getCustomerPaymentBalance({
+  accountId,
+  remoteJid = "",
+  senderJid = "",
+  showCode = ""
+}) {
+  const result = await query(
+    `
+      SELECT balance_amount::TEXT AS "balanceAmount"
+      FROM whatsapp_customer_payment_balances
+      WHERE account_id = $1
+        AND remote_jid = $2
+        AND sender_jid = $3
+        AND show_code = $4
+      LIMIT 1
+    `,
+    [accountId, remoteJid || "", senderJid || "", showCode || ""]
+  );
+  return Number(result.rows[0]?.balanceAmount || 0);
+}
+
+export async function setCustomerPaymentBalance({
+  accountId,
+  remoteJid = "",
+  senderJid = "",
+  showCode = "",
+  balance = 0,
+  paymentProofId = null
+}) {
+  const result = await query(
+    `
+      INSERT INTO whatsapp_customer_payment_balances (
+        account_id,
+        remote_jid,
+        sender_jid,
+        show_code,
+        balance_amount,
+        last_payment_proof_id
+      )
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (account_id, remote_jid, sender_jid, show_code)
+      DO UPDATE SET
+        balance_amount = EXCLUDED.balance_amount,
+        last_payment_proof_id = COALESCE(EXCLUDED.last_payment_proof_id, whatsapp_customer_payment_balances.last_payment_proof_id),
+        updated_at = NOW()
+      RETURNING balance_amount::TEXT AS "balanceAmount"
+    `,
+    [accountId, remoteJid || "", senderJid || "", showCode || "", Math.max(Number(balance || 0), 0), paymentProofId]
+  );
+  return Number(result.rows[0]?.balanceAmount || 0);
 }
 
 export async function deleteInboundWhatsappMessage(id) {
@@ -520,6 +609,123 @@ export async function listBookingStats({ days = 14 } = {}) {
     [Math.min(Math.max(Number(days) || 14, 1), 90)]
   );
   return result.rows;
+}
+
+export async function listSupportSummary({ accountId = 0, limit = 200 } = {}) {
+  const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 500);
+  const balances = await query(
+    `
+      SELECT
+        b.id,
+        b.account_id AS "accountId",
+        a.account_key AS "accountKey",
+        a.display_name AS "accountName",
+        b.remote_jid AS "remoteJid",
+        b.sender_jid AS "senderJid",
+        b.show_code AS "showCode",
+        b.balance_amount::TEXT AS "balanceAmount",
+        b.updated_at AS "updatedAt"
+      FROM whatsapp_customer_payment_balances b
+      JOIN whatsapp_listener_accounts a ON a.id = b.account_id
+      WHERE b.balance_amount > 0
+        AND ($1::BIGINT = 0 OR b.account_id = $1)
+      ORDER BY b.updated_at DESC
+      LIMIT $2
+    `,
+    [accountId, safeLimit]
+  );
+
+  const support = await query(
+    `
+      SELECT
+        m.id,
+        m.account_id AS "accountId",
+        m.account_key AS "accountKey",
+        a.display_name AS "accountName",
+        m.remote_jid AS "remoteJid",
+        m.sender_jid AS "senderJid",
+        m.push_name AS "pushName",
+        m.show_code AS "showCode",
+        m.message_text AS "messageText",
+        m.calculated_price::TEXT AS "calculatedPrice",
+        m.manual_work AS "manualWork",
+        m.forwarded_at AS "forwardedAt",
+        m.forward_error AS "forwardError",
+        m.received_at AS "receivedAt",
+        COALESCE(b.balance_amount, 0)::TEXT AS "availableBalance",
+        GREATEST(COALESCE(m.calculated_price, 0) - COALESCE(b.balance_amount, 0), 0)::TEXT AS "pendingAmount"
+      FROM whatsapp_inbound_messages m
+      JOIN whatsapp_listener_accounts a ON a.id = m.account_id
+      LEFT JOIN whatsapp_customer_payment_balances b
+        ON b.account_id = m.account_id
+       AND b.remote_jid = m.remote_jid
+       AND b.sender_jid = m.sender_jid
+       AND b.show_code = m.show_code
+      WHERE ($1::BIGINT = 0 OR m.account_id = $1)
+        AND (
+          m.manual_work = TRUE
+          OR (
+            m.forwarded_at IS NULL
+            AND m.manual_work = FALSE
+            AND m.calculated_price IS NOT NULL
+          )
+        )
+      ORDER BY m.received_at DESC
+      LIMIT $2
+    `,
+    [accountId, safeLimit]
+  );
+
+  const agents = await query(
+    `
+      SELECT
+        m.account_id AS "accountId",
+        m.account_key AS "accountKey",
+        a.display_name AS "accountName",
+        COUNT(*)::INTEGER AS "bookingCount",
+        COUNT(DISTINCT COALESCE(NULLIF(m.sender_jid, ''), m.remote_jid))::INTEGER AS "customerCount",
+        COALESCE(SUM(m.calculated_price), 0)::TEXT AS "bookingAmount",
+        COUNT(*) FILTER (WHERE m.forwarded_at IS NOT NULL)::INTEGER AS "successCount",
+        COUNT(*) FILTER (WHERE m.manual_work = TRUE)::INTEGER AS "manualCount",
+        COUNT(*) FILTER (
+          WHERE m.forwarded_at IS NULL
+            AND m.manual_work = FALSE
+            AND m.calculated_price IS NOT NULL
+        )::INTEGER AS "paymentMissingCount"
+      FROM whatsapp_inbound_messages m
+      JOIN whatsapp_listener_accounts a ON a.id = m.account_id
+      WHERE ($1::BIGINT = 0 OR m.account_id = $1)
+      GROUP BY m.account_id, m.account_key, a.display_name
+      ORDER BY "paymentMissingCount" DESC, "manualCount" DESC, "bookingCount" DESC
+    `,
+    [accountId]
+  );
+
+  const kpis = await query(
+    `
+      SELECT
+        COUNT(*) FILTER (WHERE forwarded_at IS NOT NULL)::INTEGER AS "successfulBookings",
+        COUNT(*) FILTER (
+          WHERE forwarded_at IS NULL
+            AND manual_work = FALSE
+            AND calculated_price IS NOT NULL
+        )::INTEGER AS "paymentMissingBookings",
+        COUNT(*) FILTER (WHERE manual_work = TRUE)::INTEGER AS "manualSupportBookings"
+      FROM whatsapp_inbound_messages
+      WHERE ($1::BIGINT = 0 OR account_id = $1)
+    `,
+    [accountId]
+  );
+
+  return {
+    kpis: {
+      ...kpis.rows[0],
+      customersWithBalance: balances.rows.length
+    },
+    balances: balances.rows,
+    support: support.rows,
+    agents: agents.rows
+  };
 }
 
 export async function storeWhatsappPaymentProof({

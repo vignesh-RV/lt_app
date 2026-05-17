@@ -8,8 +8,10 @@ import makeWASocket, {
 import pino from "pino";
 import { config } from "./config.js";
 import {
+  addCustomerPaymentBalance,
   getListenerAccountById,
-  findForwardableBookingForProof,
+  getCustomerPaymentBalance,
+  listForwardableBookingsForProof,
   listWhatsappChats,
   listListenerAccounts,
   markBookingForwarded,
@@ -18,19 +20,21 @@ import {
   storeInboundWhatsappMessage,
   storeListenerEvent,
   storeWhatsappPaymentProof,
+  setCustomerPaymentBalance,
   upsertWhatsappChat,
   updateListenerAccountStatus
 } from "./baileysRepository.js";
 import { calculatePredictionPricing } from "./gamePricing.js";
 import { readImageText } from "./ocrService.js";
 import { parsePaymentProofText } from "./paymentProofParser.js";
-import { activeBookingWindow } from "./showSchedule.js";
+import { activeBookingWindow, isShowWindowActive } from "./showSchedule.js";
 import { findCreditForProof } from "./workflowRepository.js";
 
 const sockets = new Map();
 const chatCache = new Map();
 const logger = pino({ level: process.env.BAILEYS_LOG_LEVEL || "warn" });
 let outboundReplyQueue = Promise.resolve();
+const CARRIED_BALANCE_SHOW = "__BALANCE__";
 
 export async function startBaileysListeners() {
   if (!config.baileysEnabled) {
@@ -428,7 +432,10 @@ async function captureMessageIfInWindow(account, message) {
   await markIncomingMessageRead(account, message);
 
   if (storedMessage && isAutoReplyPricing(pricing)) {
-    await enqueueOutboundReply(() => sendPricingReply(account, message, messageText, pricing));
+    await enqueueOutboundReply(async () => {
+      await sendPricingReply(account, message, messageText, pricing);
+      await applyCarriedBalanceForBooking({ account, message, pricing, window, receivedAt });
+    });
   }
 }
 
@@ -515,6 +522,66 @@ async function capturePaymentProofMedia(account, message, receivedAt, window) {
 
 function isAutoReplyPricing(pricing) {
   return Boolean(pricing && !pricing.manualWork && pricing.totalPrice && pricing.breakdown?.entries?.length);
+}
+
+async function applyCarriedBalanceForBooking({ account, message, pricing, window, receivedAt }) {
+  if (!window.active || !pricing?.totalPrice) {
+    return;
+  }
+  const remoteJid = message.key?.remoteJid || "";
+  const senderJid = message.key?.participant || remoteJid;
+  const carriedBalance = await getCustomerPaymentBalance({
+    accountId: account.id,
+    remoteJid,
+    senderJid,
+    showCode: CARRIED_BALANCE_SHOW
+  });
+  if (carriedBalance <= 0) {
+    return;
+  }
+
+  const bookingAmount = Number(pricing.totalPrice || 0);
+  const currentShowBalance = await getCustomerPaymentBalance({
+    accountId: account.id,
+    remoteJid,
+    senderJid,
+    showCode: window.showCode
+  });
+  const useAmount = Math.min(carriedBalance, Math.max(bookingAmount - currentShowBalance, 0));
+  if (useAmount <= 0) {
+    return;
+  }
+
+  await setCustomerPaymentBalance({
+    accountId: account.id,
+    remoteJid,
+    senderJid,
+    showCode: CARRIED_BALANCE_SHOW,
+    balance: carriedBalance - useAmount
+  });
+  const availableAmount = await addCustomerPaymentBalance({
+    accountId: account.id,
+    remoteJid,
+    senderJid,
+    showCode: window.showCode,
+    amount: useAmount
+  });
+
+  const running = sockets.get(Number(account.id));
+  if (!running?.socket) {
+    return;
+  }
+  if (availableAmount >= bookingAmount) {
+    await forwardPaidBooking({ account, paymentProofId: null, remoteJid, senderJid, amount: 0, receivedAt });
+  } else {
+    await sendPendingDetails({
+      account,
+      socket: running.socket,
+      remoteJid,
+      senderJid,
+      pendingAmount: bookingAmount - availableAmount
+    });
+  }
 }
 
 async function enqueueOutboundReply(task) {
@@ -673,71 +740,353 @@ async function markIncomingMessageRead(account, message) {
 }
 
 async function forwardPaidBooking({ account, paymentProofId, remoteJid, senderJid, amount, receivedAt }) {
-  const booking = await findForwardableBookingForProof({
-    accountId: account.id,
-    remoteJid,
-    senderJid,
-    amount,
-    receivedAt
-  });
-  if (!booking) {
+  const paymentAmount = Number(amount || 0);
+  const paymentWindow = activeBookingWindow(receivedAt);
+  if (!paymentWindow.active) {
+    await addCustomerPaymentBalance({
+      accountId: account.id,
+      remoteJid,
+      senderJid,
+      showCode: CARRIED_BALANCE_SHOW,
+      amount: paymentAmount,
+      paymentProofId
+    });
+    const running = sockets.get(Number(account.id));
+    if (running?.socket) {
+      await sendTimesUpMessage({ account, socket: running.socket, remoteJid, senderJid, balance: paymentAmount });
+    }
     await markPaymentProofForwardResult({
       proofId: paymentProofId,
-      error: "No priced pending booking found for sender/show/amount or forwarding target is not configured"
+      error: "Times Up - payment received outside active booking window"
     });
     await storeListenerEvent({
       account,
       eventType: "booking_forward_skipped",
-      detail: "No priced pending booking found for sender/show/amount or forwarding target is not configured",
+      detail: "Times Up - payment received outside active booking window",
       remoteJid,
       senderJid
     });
     return;
   }
 
-  const destinationJid = normalizeDestinationJid(booking.destinationJid);
+  const carriedBalance = await getCustomerPaymentBalance({
+    accountId: account.id,
+    remoteJid,
+    senderJid,
+    showCode: CARRIED_BALANCE_SHOW
+  });
+  if (carriedBalance > 0) {
+    await setCustomerPaymentBalance({
+      accountId: account.id,
+      remoteJid,
+      senderJid,
+      showCode: CARRIED_BALANCE_SHOW,
+      balance: 0,
+      paymentProofId
+    });
+  }
+  const availableAmount = await addCustomerPaymentBalance({
+    accountId: account.id,
+    remoteJid,
+    senderJid,
+    showCode: paymentWindow.showCode,
+    amount: paymentAmount + carriedBalance,
+    paymentProofId
+  });
+  const availableBookings = await listForwardableBookingsForProof({
+    accountId: account.id,
+    remoteJid,
+    senderJid,
+    showCode: paymentWindow.showCode,
+    receivedAt
+  });
+  const bookings = selectCoveredBookings(availableBookings, availableAmount);
+  if (bookings.length === 0) {
+    const pendingAmount = nextPendingAmount(availableBookings, availableAmount);
+    const running = sockets.get(Number(account.id));
+    if (running?.socket && pendingAmount > 0) {
+      await sendPendingDetails({ account, socket: running.socket, remoteJid, senderJid, pendingAmount });
+    }
+    await markPaymentProofForwardResult({
+      proofId: paymentProofId,
+      error: pendingAmount > 0
+        ? `Pend : Rs ${replyMoney(pendingAmount)}`
+        : "No priced pending booking found for sender/show/amount or forwarding target is not configured"
+    });
+    await storeListenerEvent({
+      account,
+      eventType: "booking_forward_skipped",
+      detail: pendingAmount > 0
+        ? `Pend : Rs ${replyMoney(pendingAmount)}`
+        : "No priced pending booking found for sender/show/amount or forwarding target is not configured",
+      remoteJid,
+      senderJid
+    });
+    return;
+  }
+
   const running = sockets.get(Number(account.id));
   if (!running?.socket) {
     const error = "WhatsApp socket is not running for this account";
-    await markPaymentProofForwardResult({ proofId: paymentProofId, bookingId: booking.id, error });
+    await markPaymentProofForwardResult({ proofId: paymentProofId, bookingId: bookings[0]?.id || null, error });
     await storeListenerEvent({
       account,
       eventType: "booking_forward_failed",
       detail: error,
       remoteJid,
-      senderJid,
-      messageText: booking.messageText
+      senderJid
     });
     return;
   }
 
-  try {
-    await running.socket.sendMessage(destinationJid, { text: booking.messageText });
-    await markBookingForwarded({ bookingId: booking.id, paymentProofId, destinationJid });
-    await markPaymentProofForwardResult({ proofId: paymentProofId, bookingId: booking.id, forwarded: true });
-    await storeListenerEvent({
-      account,
-      eventType: "booking_forwarded",
-      detail: `booking=${booking.id}; show=${booking.showCode}; to=${destinationJid}`,
+  let forwardedTotal = 0;
+  let forwardedCount = 0;
+  for (const booking of bookings) {
+    if (!isShowWindowActive(booking.showCode, new Date())) {
+      await setCustomerPaymentBalance({
+        accountId: account.id,
+        remoteJid,
+        senderJid,
+        showCode: paymentWindow.showCode,
+        balance: 0,
+        paymentProofId
+      });
+      await addCustomerPaymentBalance({
+        accountId: account.id,
+        remoteJid,
+        senderJid,
+        showCode: CARRIED_BALANCE_SHOW,
+        amount: availableAmount,
+        paymentProofId
+      });
+      await sendTimesUpMessage({ account, socket: running.socket, remoteJid, senderJid, balance: availableAmount });
+      await markPaymentProofForwardResult({
+        proofId: paymentProofId,
+        bookingId: booking.id,
+        error: "Times Up - booking window closed before forward"
+      });
+      await storeListenerEvent({
+        account,
+        eventType: "booking_forward_skipped",
+        detail: "Times Up - booking window closed before forward",
+        remoteJid,
+        senderJid,
+        messageText: booking.messageText
+      });
+      return;
+    }
+    const destinationJid = normalizeDestinationJid(booking.destinationJid);
+    try {
+      await running.socket.sendMessage(destinationJid, { text: booking.messageText });
+      await markBookingForwarded({ bookingId: booking.id, paymentProofId, destinationJid });
+      await markPaymentProofForwardResult({ proofId: paymentProofId, bookingId: booking.id, forwarded: true });
+      await sendForwardAcknowledgement({ account, socket: running.socket, booking });
+      forwardedTotal += Number(booking.calculatedPrice || 0);
+      forwardedCount += 1;
+      await storeListenerEvent({
+        account,
+        eventType: "booking_forwarded",
+        detail: `booking=${booking.id}; show=${booking.showCode}; to=${destinationJid}`,
+        remoteJid,
+        senderJid,
+        messageText: booking.messageText
+      });
+    } catch (error) {
+      await markPaymentProofForwardResult({
+        proofId: paymentProofId,
+        bookingId: booking.id,
+        error: error.message || "Forward failed"
+      });
+      await storeListenerEvent({
+        account,
+        eventType: "booking_forward_failed",
+        detail: error.message || "Forward failed",
+        remoteJid,
+        senderJid,
+        messageText: booking.messageText
+      });
+    }
+  }
+
+  if (forwardedCount > 0) {
+    const balance = await setCustomerPaymentBalance({
+      accountId: account.id,
       remoteJid,
       senderJid,
-      messageText: booking.messageText
+      showCode: paymentWindow.showCode,
+      balance: availableAmount - forwardedTotal,
+      paymentProofId
+    });
+    const remainingBookings = availableBookings.filter((booking) => !bookings.some((item) => item.id === booking.id));
+    const pendingAmount = nextPendingAmount(remainingBookings, balance);
+    if (pendingAmount > 0) {
+      await sendPendingDetails({ account, socket: running.socket, remoteJid, senderJid, pendingAmount });
+    } else if (balance > 0) {
+      await sendBalanceDetails({ account, socket: running.socket, remoteJid, senderJid, balance });
+    }
+  }
+}
+
+function selectCoveredBookings(bookings, amount) {
+  let remaining = Number(amount || 0);
+  const selected = [];
+  for (const booking of bookings || []) {
+    const price = Number(booking.calculatedPrice || 0);
+    if (price > 0 && price <= remaining) {
+      selected.push(booking);
+      remaining -= price;
+    }
+  }
+  return selected;
+}
+
+function nextPendingAmount(bookings, availableAmount) {
+  const next = (bookings || []).find((booking) => Number(booking.calculatedPrice || 0) > Number(availableAmount || 0));
+  if (!next) {
+    return 0;
+  }
+  return Number(next.calculatedPrice || 0) - Number(availableAmount || 0);
+}
+
+async function sendForwardAcknowledgement({ account, socket, booking }) {
+  const customerJid = booking.remoteJid || booking.senderJid || "";
+  if (!customerJid) {
+    return;
+  }
+
+  try {
+    const quoted = quotedStoredBookingMessage(booking);
+    await socket.sendMessage(customerJid, { text: "Ok 👍" }, quoted ? { quoted } : undefined);
+    await storeListenerEvent({
+      account,
+      eventType: "booking_forward_ack_sent",
+      detail: `booking=${booking.id}; quoted=${quoted ? "yes" : "no"}`,
+      messageId: booking.messageId || "",
+      remoteJid: booking.remoteJid || "",
+      senderJid: booking.senderJid || "",
+      messageText: "Ok 👍"
     });
   } catch (error) {
-    await markPaymentProofForwardResult({
-      proofId: paymentProofId,
-      bookingId: booking.id,
-      error: error.message || "Forward failed"
-    });
     await storeListenerEvent({
       account,
-      eventType: "booking_forward_failed",
-      detail: error.message || "Forward failed",
-      remoteJid,
-      senderJid,
-      messageText: booking.messageText
+      eventType: "booking_forward_ack_failed",
+      detail: error.message || "ack failed",
+      messageId: booking.messageId || "",
+      remoteJid: booking.remoteJid || "",
+      senderJid: booking.senderJid || ""
     });
   }
+}
+
+async function sendBalanceDetails({ account, socket, remoteJid, senderJid, balance }) {
+  const customerJid = remoteJid || senderJid || "";
+  if (!customerJid) {
+    return;
+  }
+  const messageText = `Bal : Rs ${replyMoney(balance)}`;
+  try {
+    await socket.sendMessage(customerJid, { text: messageText });
+    await storeListenerEvent({
+      account,
+      eventType: "booking_balance_sent",
+      detail: messageText,
+      remoteJid,
+      senderJid,
+      messageText
+    });
+  } catch (error) {
+    await storeListenerEvent({
+      account,
+      eventType: "booking_balance_failed",
+      detail: error.message || "balance send failed",
+      remoteJid,
+      senderJid
+    });
+  }
+}
+
+async function sendPendingDetails({ account, socket, remoteJid, senderJid, pendingAmount }) {
+  const customerJid = remoteJid || senderJid || "";
+  if (!customerJid) {
+    return;
+  }
+  const messageText = `Pend : Rs ${replyMoney(pendingAmount)}`;
+  try {
+    await socket.sendMessage(customerJid, { text: messageText });
+    await storeListenerEvent({
+      account,
+      eventType: "booking_pending_sent",
+      detail: messageText,
+      remoteJid,
+      senderJid,
+      messageText
+    });
+  } catch (error) {
+    await storeListenerEvent({
+      account,
+      eventType: "booking_pending_failed",
+      detail: error.message || "pending send failed",
+      remoteJid,
+      senderJid
+    });
+  }
+}
+
+async function sendTimesUpMessage({ account, socket, remoteJid, senderJid, balance = 0 }) {
+  const customerJid = remoteJid || senderJid || "";
+  if (!customerJid) {
+    return;
+  }
+  const lines = ["Times Up"];
+  if (Number(balance || 0) > 0) {
+    lines.push(`Bal : Rs ${replyMoney(balance)}`);
+  }
+  const messageText = lines.join("\n");
+  try {
+    await socket.sendMessage(customerJid, { text: messageText });
+    await storeListenerEvent({
+      account,
+      eventType: "booking_times_up_sent",
+      detail: messageText,
+      remoteJid,
+      senderJid,
+      messageText
+    });
+  } catch (error) {
+    await storeListenerEvent({
+      account,
+      eventType: "booking_times_up_failed",
+      detail: error.message || "times up send failed",
+      remoteJid,
+      senderJid
+    });
+  }
+}
+
+function quotedStoredBookingMessage(booking) {
+  const stored = booking.messageJson || {};
+  if (stored?.key && stored?.message) {
+    return {
+      key: stored.key,
+      message: stored.message,
+      pushName: stored.pushName || booking.pushName || ""
+    };
+  }
+  if (!booking.messageId || !booking.remoteJid) {
+    return null;
+  }
+  return {
+    key: {
+      id: booking.messageId,
+      remoteJid: booking.remoteJid,
+      participant: booking.senderJid || undefined,
+      fromMe: false
+    },
+    message: {
+      conversation: booking.messageText || ""
+    },
+    pushName: booking.pushName || ""
+  };
 }
 
 function hasPaymentProofMedia(message = {}) {

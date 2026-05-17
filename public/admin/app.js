@@ -4,12 +4,14 @@ const state = {
   stats: [],
   events: [],
   proofs: [],
+  support: { kpis: {}, balances: [], support: [], agents: [] },
   forwardTargets: [],
   forwardChats: [],
   credits: [],
   session: null
 };
 let refreshTimer = null;
+const ADMIN_API_BASE = (window.WA_ADMIN_API_BASE || "/admin/api").replace(/\/$/, "");
 
 const pageMeta = {
   overview: ["Overview", "Production control for WhatsApp booking capture."],
@@ -17,6 +19,7 @@ const pageMeta = {
   bookings: ["Bookings", "Captured customer messages by account and show."],
   events: ["Listener Events", "Live diagnostics for received, skipped, and captured messages."],
   proofs: ["Payment Proofs", "OCR metadata from WhatsApp payment screenshots matched against credits."],
+  support: ["Support", "Customer balances, payment gaps, manual work, and agent booking health."],
   forwarding: ["Forwarding", "Configure where paid prediction messages are forwarded for each show."],
   credits: ["Credits", "Recent bank credit history received by the system."]
 };
@@ -28,6 +31,7 @@ document.getElementById("addAccount").onclick = addAccount;
 document.getElementById("loadBookings").onclick = loadBookings;
 document.getElementById("loadEvents").onclick = loadEvents;
 document.getElementById("loadProofs").onclick = loadProofs;
+document.getElementById("loadSupport").onclick = loadSupport;
 document.getElementById("loadCredits").onclick = loadCredits;
 document.getElementById("loadForwardChats").onclick = loadForwardChats;
 document.getElementById("forwardChatSearch").oninput = renderForwardRows;
@@ -87,7 +91,7 @@ function showApp() {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(`/admin/api${path}`, {
+  const response = await fetch(`${ADMIN_API_BASE}${path}`, {
     method: options.method || "GET",
     headers: options.body ? { "Content-Type": "application/json" } : undefined,
     body: options.body ? JSON.stringify(options.body) : undefined
@@ -114,12 +118,13 @@ function showTab(tab) {
   if (tab === "bookings") loadBookings();
   if (tab === "events") loadEvents();
   if (tab === "proofs") loadProofs();
+  if (tab === "support") loadSupport();
   if (tab === "forwarding") loadForwardTargets();
   if (tab === "credits") loadCredits();
 }
 
 async function refreshAll() {
-  await Promise.all([refreshAccounts(), loadBookings(), loadBookingStats(), loadEvents(), loadProofs(), loadForwardTargets(), loadCredits()]);
+  await Promise.all([refreshAccounts(), loadBookings(), loadBookingStats(), loadEvents(), loadProofs(), loadSupport(), loadForwardTargets(), loadCredits()]);
   renderOverview();
   markUpdated();
 }
@@ -131,6 +136,7 @@ async function refreshAccounts() {
   renderAccountFilter();
   renderEventAccountFilter();
   renderProofAccountFilter();
+  renderSupportAccountFilter();
   renderForwardAccountFilter();
 }
 
@@ -262,6 +268,16 @@ function renderProofAccountFilter() {
   select.innerHTML = `<option value="0">All accounts</option>` + state.accounts.map((account) =>
     `<option value="${account.id}">${escapeHtml(account.displayName || account.accountKey)}</option>`
   ).join("");
+}
+
+function renderSupportAccountFilter() {
+  const select = document.getElementById("supportAccount");
+  if (!select) return;
+  const selected = select.value || "0";
+  select.innerHTML = `<option value="0">All accounts</option>` + state.accounts.map((account) =>
+    `<option value="${account.id}">${escapeHtml(account.displayName || account.accountKey)}</option>`
+  ).join("");
+  select.value = [...select.options].some((option) => option.value === selected) ? selected : "0";
 }
 
 function renderForwardAccountFilter() {
@@ -426,6 +442,57 @@ async function loadProofs() {
   state.proofs = json.proofs || [];
   renderProofRows();
   markUpdated();
+}
+
+async function loadSupport() {
+  const accountId = document.getElementById("supportAccount")?.value || "0";
+  const json = await api(`/support-summary?accountId=${encodeURIComponent(accountId)}&limit=200`);
+  state.support = {
+    kpis: json.kpis || {},
+    balances: json.balances || [],
+    support: json.support || [],
+    agents: json.agents || []
+  };
+  renderSupport();
+  markUpdated();
+}
+
+function renderSupport() {
+  const kpis = state.support.kpis || {};
+  document.getElementById("supportSuccess").textContent = kpis.successfulBookings || 0;
+  document.getElementById("supportMissing").textContent = kpis.paymentMissingBookings || 0;
+  document.getElementById("supportBalance").textContent = kpis.customersWithBalance || 0;
+  document.getElementById("supportManual").textContent = kpis.manualSupportBookings || 0;
+
+  document.getElementById("supportQueue").innerHTML = (state.support.support || []).slice(0, 80).map((item) => {
+    const type = item.manualWork ? "Manual" : Number(item.pendingAmount || 0) > 0 ? `Pend Rs ${money(item.pendingAmount)}` : "Paid wait";
+    return `
+      <div class="support-item ${item.manualWork ? "manual" : ""}">
+        <div><strong>${contactLabel(item)}</strong><span>${formatDate(item.receivedAt)} | ${escapeHtml(item.accountName || item.accountKey)} | ${showBadge(item.showCode)}</span></div>
+        <b>${escapeHtml(type)}</b>
+        <p>${escapeHtml(item.messageText || "").slice(0, 220)}</p>
+      </div>
+    `;
+  }).join("") || `<div class="empty-note">No support queue.</div>`;
+
+  document.getElementById("supportBalances").innerHTML = (state.support.balances || []).slice(0, 80).map((item) => `
+    <div class="support-item balance">
+      <div><strong>${contactLabel(item)}</strong><span>${escapeHtml(item.accountName || item.accountKey)} | ${showBadge(item.showCode)}</span></div>
+      <b>Rs ${money(item.balanceAmount)}</b>
+    </div>
+  `).join("") || `<div class="empty-note">No customer balances.</div>`;
+
+  document.getElementById("supportAgentRows").innerHTML = (state.support.agents || []).map((item) => `
+    <tr>
+      <td>${escapeHtml(item.accountName || item.accountKey)}</td>
+      <td>${escapeHtml(item.customerCount)}</td>
+      <td>${escapeHtml(item.bookingCount)}</td>
+      <td>Rs ${money(item.bookingAmount)}</td>
+      <td>${escapeHtml(item.successCount)}</td>
+      <td>${escapeHtml(item.paymentMissingCount)}</td>
+      <td>${escapeHtml(item.manualCount)}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="7">No agent booking data.</td></tr>`;
 }
 
 function renderProofRows() {

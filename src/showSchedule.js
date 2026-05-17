@@ -7,6 +7,11 @@ const SHOW_BOOKING_WINDOWS = [
   { code: "8PM_DEAR", market: "Dear", cutoffHour: 19, cutoffMinute: 57 }
 ];
 
+export function isShowWindowActive(showCode, at = new Date()) {
+  const window = activeBookingWindow(at);
+  return Boolean(window.active && window.showCode === showCode);
+}
+
 export function activeBookingWindow(at = new Date()) {
   const ist = toIstParts(at);
   const currentMinutes = ist.hour * 60 + ist.minute;
