@@ -34,7 +34,20 @@ const upload = multer({
   }
 });
 
-app.use(cors());
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || !config.adminCorsOrigin) {
+      callback(null, true);
+      return;
+    }
+    const allowed = config.adminCorsOrigin
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    callback(null, allowed.includes(origin));
+  },
+  credentials: true
+}));
 app.use(express.json({
   limit: "256kb",
   verify: (req, _res, buffer) => {

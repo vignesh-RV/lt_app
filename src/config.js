@@ -14,7 +14,8 @@ export const config = {
   adminUsername: process.env.ADMIN_USERNAME || "",
   adminPassword: process.env.ADMIN_PASSWORD || "",
   adminTotpSecret: process.env.ADMIN_TOTP_SECRET || "",
-  adminSessionSecret: process.env.ADMIN_SESSION_SECRET || process.env.API_REQUEST_SECRET || ""
+  adminSessionSecret: process.env.ADMIN_SESSION_SECRET || process.env.API_REQUEST_SECRET || "",
+  adminCorsOrigin: process.env.ADMIN_CORS_ORIGIN || ""
 };
 
 if (!config.databaseUrl) {

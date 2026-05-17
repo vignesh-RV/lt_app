@@ -80,9 +80,7 @@ async function login(event) {
 
 async function logout() {
   await api("/logout", { method: "POST", allowUnauthorized: true });
-  stopAutoRefresh();
-  document.getElementById("appView").classList.add("hidden");
-  document.getElementById("loginView").classList.remove("hidden");
+  showLogin();
 }
 
 function showApp() {
@@ -93,14 +91,14 @@ function showApp() {
 async function api(path, options = {}) {
   const response = await fetch(`${ADMIN_API_BASE}${path}`, {
     method: options.method || "GET",
+    credentials: "include",
     headers: options.body ? { "Content-Type": "application/json" } : undefined,
     body: options.body ? JSON.stringify(options.body) : undefined
   });
   const json = await response.json();
   if ((!response.ok || !json.ok) && !options.allowUnauthorized) {
     if (response.status === 401) {
-      document.getElementById("appView").classList.add("hidden");
-      document.getElementById("loginView").classList.remove("hidden");
+      showLogin();
     }
     throw new Error(json.error || JSON.stringify(json));
   }
@@ -108,6 +106,12 @@ async function api(path, options = {}) {
     throw new Error(json.error || JSON.stringify(json));
   }
   return json;
+}
+
+function showLogin() {
+  stopAutoRefresh();
+  document.getElementById("appView").classList.add("hidden");
+  document.getElementById("loginView").classList.remove("hidden");
 }
 
 function showTab(tab) {
@@ -840,8 +844,8 @@ function escapeHtml(value) {
 function startAutoRefresh() {
   stopAutoRefresh();
   refreshTimer = setInterval(() => {
-    if (!document.hidden) {
-      refreshVisible();
+    if (!document.hidden && isAppVisible()) {
+      refreshVisible().catch((error) => console.warn(error));
     }
   }, 5000);
 }
@@ -854,6 +858,9 @@ function stopAutoRefresh() {
 }
 
 async function refreshVisible() {
+  if (!isAppVisible()) {
+    return;
+  }
   const active = document.querySelector(".panel.active")?.id || "overview";
   if (active === "accounts") {
     await refreshAccounts();
@@ -872,6 +879,10 @@ async function refreshVisible() {
   }
   renderOverview();
   markUpdated();
+}
+
+function isAppVisible() {
+  return !document.getElementById("appView").classList.contains("hidden");
 }
 
 function markUpdated() {

@@ -301,9 +301,12 @@ function setSessionCookie(res, username) {
   const expiresAt = Date.now() + SESSION_TTL_MS;
   const payload = Buffer.from(JSON.stringify({ username, expiresAt })).toString("base64url");
   const signature = sign(payload);
+  const crossSite = Boolean(config.adminCorsOrigin);
+  const sameSite = crossSite ? "None" : "Lax";
+  const secure = crossSite ? "; Secure" : "";
   res.setHeader(
     "Set-Cookie",
-    `${SESSION_COOKIE}=${payload}.${signature}; HttpOnly; SameSite=Lax; Path=/admin; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`
+    `${SESSION_COOKIE}=${payload}.${signature}; HttpOnly; SameSite=${sameSite}; Path=/admin; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}${secure}`
   );
 }
 
