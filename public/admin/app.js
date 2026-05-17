@@ -190,6 +190,14 @@ function renderAccounts() {
       <div class="qr-slot"></div>
     </div>
   `).join("");
+  normalizeAccountActionIcons(root);
+}
+
+function normalizeAccountActionIcons(root) {
+  root.querySelectorAll('button[title="Start listener"]').forEach((button) => { button.textContent = "\u25b6"; });
+  root.querySelectorAll('button[title="Stop listener"]').forEach((button) => { button.textContent = "\u25a0"; });
+  root.querySelectorAll('button[title="Show QR"]').forEach((button) => { button.textContent = "\u25a6"; });
+  root.querySelectorAll('button[title="Start test capture"], button[title="Stop test capture"]').forEach((button) => { button.textContent = "\u25cf"; });
 }
 
 function listeningBadge(account) {
@@ -224,10 +232,16 @@ async function stopAccount(id) {
 
 async function showQr(id) {
   const slot = document.querySelector(`#account-${id} .qr-slot`);
-  slot.innerHTML = "Starting listener...";
+  const account = state.accounts.find((item) => Number(item.id) === Number(id));
+  const status = account?.lastStatus || "";
+  slot.innerHTML = status === "qr_ready" ? "Loading QR..." : "Starting listener...";
   try {
-    await api(`/accounts/${id}/start`, { method: "POST" });
-    await wait(1800);
+    if (!["qr_ready", "starting"].includes(status)) {
+      await api(`/accounts/${id}/start`, { method: "POST" });
+      await wait(1800);
+    } else if (status === "starting") {
+      await wait(1800);
+    }
     const json = await api(`/accounts/${id}/qr`);
     slot.innerHTML = `<img class="qr" src="${json.dataUrl}" alt="WhatsApp QR">`;
     refreshAll();

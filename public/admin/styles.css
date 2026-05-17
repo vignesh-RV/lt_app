@@ -51,7 +51,9 @@ button.secondary {
   place-items: center;
   padding: 0;
   border-radius: 8px;
-  font-size: 12px;
+  font-family: Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1;
   font-weight: 900;
   letter-spacing: 0;
 }
