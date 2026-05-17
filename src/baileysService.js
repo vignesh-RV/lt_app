@@ -347,6 +347,16 @@ function jidType(jid) {
 }
 
 async function captureMessageIfInWindow(account, message) {
+  const latestAccount = await getListenerAccountById(account.id);
+  if (!latestAccount?.isActive) {
+    return;
+  }
+  account = latestAccount;
+  const running = sockets.get(socketKey(account.id));
+  if (running) {
+    running.account = account;
+  }
+
   if (!message?.key?.id || message.key.fromMe) {
     await storeListenerEvent({
       account,
