@@ -6,7 +6,7 @@ const SHOWS = [
   { code: "6PM_DEAR", label: "6PM Dear", market: "Dear", hour: 18, minute: 0 },
   { code: "8PM_DEAR", label: "8PM Dear", market: "Dear", hour: 20, minute: 0 }
 ];
-const COMPACT_PREDICTION_RE = /\b(?:(AB|BC|AC|A|B|C)\s*)?(\d{1,4})\s*[=_]\s*(\d{1,3})\s*(?:sets|set|sef|s)?\b/gi;
+const COMPACT_PREDICTION_RE = /\b(?:(AB|BC|AC|A|B|C)[\s_-]*)?(\d{1,4})\s*[=_-]\s*(\d{1,3})\s*(?:sets|set|sef|s)?\b/gi;
 
 const PRICE_RE = /\b(?:rs\.?|inr|₹)\s*([0-9]+(?:\.[0-9]{1,2})?)\b/i;
 const TRAILING_PRICE_RE = /\b([0-9]+(?:\.[0-9]{1,2})?)\s*(?:rs\.?|inr|₹)\b/i;
@@ -429,11 +429,11 @@ function normalizeText(text) {
 }
 
 function readContext(line) {
-  const compact = line.match(/\b(AB|BC|AC|A|B|C)\s*\d{1,4}\s*=/i);
+  const compact = line.match(/\b(AB|BC|AC|A|B|C)[\s_-]*\d{1,4}\s*[=_-]/i);
   if (compact) {
     return compact[1].toUpperCase();
   }
-  const prefixed = line.match(/\b(AB|BC|AC|A|B|C)\s*\d{1,4}\b/i);
+  const prefixed = line.match(/\b(AB|BC|AC|A|B|C)[\s_-]*\d{1,4}\b/i);
   if (prefixed) {
     return prefixed[1].toUpperCase();
   }
@@ -706,7 +706,7 @@ function isKnownPricingToken(token) {
   if (/^e\d{1,3}(?:s|set|sets|sef)$/i.test(cleaned)) {
     return true;
   }
-  if (/^(?:(?:ab|bc|ac|a|b|c)\s*)?\d{1,4}[=_]\d{1,3}(?:s|set|sets|sef)?$/i.test(cleaned)) {
+  if (/^(?:(?:ab|bc|ac|a|b|c)[\s_-]*)?\d{1,4}[=_-]\d{1,3}(?:s|set|sets|sef)?$/i.test(cleaned)) {
     return true;
   }
   if (/^(?:ab|bc|ac|a|b|c)\d{1,4}$/i.test(cleaned) || /^=\d{1,3}(?:s|set|sets|sef)?$/i.test(cleaned)) {
