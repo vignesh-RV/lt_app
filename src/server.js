@@ -25,6 +25,7 @@ import {
 } from "./winningsRepository.js";
 import { parsePaymentProofText } from "./paymentProofParser.js";
 import { readImageText } from "./ocrService.js";
+import { logError, logInfo } from "./logger.js";
 
 const app = express();
 const upload = multer({
@@ -455,8 +456,12 @@ app.post("/api/winners/:id/disburse", async (req, res, next) => {
   }
 });
 
-app.use((error, _req, res, _next) => {
-  console.error(error);
+app.use((error, req, res, _next) => {
+  logError("http_request_failed", error, {
+    method: req.method,
+    path: req.originalUrl,
+    ip: req.ip
+  });
   res.status(500).json({
     ok: false,
     error: "Internal server error"
@@ -464,10 +469,18 @@ app.use((error, _req, res, _next) => {
 });
 
 const server = app.listen(config.port, () => {
-  console.log(`WA Bank Monitor API listening on http://localhost:${config.port}`);
+  logInfo("server_started", { port: config.port });
   startBaileysListeners().catch((error) => {
-    console.error("Baileys listener startup failed", error);
+    logError("baileys_startup_failed", error);
   });
+});
+
+process.on("unhandledRejection", (error) => {
+  logError("unhandled_rejection", error);
+});
+
+process.on("uncaughtException", (error) => {
+  logError("uncaught_exception", error);
 });
 
 async function shutdown() {

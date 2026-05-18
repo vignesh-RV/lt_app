@@ -29,6 +29,7 @@ import { readImageText } from "./ocrService.js";
 import { parsePaymentProofText } from "./paymentProofParser.js";
 import { activeBookingWindow, isShowWindowActive } from "./showSchedule.js";
 import { findCreditForProof } from "./workflowRepository.js";
+import { logError, logInfo } from "./logger.js";
 
 const sockets = new Map();
 const chatCache = new Map();
@@ -464,6 +465,15 @@ async function capturePaymentProofMedia(account, message, receivedAt, window) {
   const filePath = path.join(mediaDir, `${messageId}.${extension}`);
 
   try {
+    logInfo("payment_proof_capture_start", {
+      accountId: account.id,
+      accountKey: account.accountKey,
+      messageId,
+      remoteJid,
+      senderJid,
+      mediaType: media.type,
+      filePath
+    });
     await writeMediaToFile(media.content, media.downloadType, filePath);
     const ocrText = await readImageText(filePath);
     const proof = parsePaymentProofText(ocrText);
@@ -507,8 +517,26 @@ async function capturePaymentProofMedia(account, message, receivedAt, window) {
       senderJid,
       messageText: ocrText
     });
+    logInfo("payment_proof_capture_success", {
+      accountId: account.id,
+      accountKey: account.accountKey,
+      messageId,
+      status,
+      amount: proof.amount || "",
+      reference: reference || "",
+      matchedCreditId: matchedCredit?.id || ""
+    });
     await markIncomingMessageRead(account, message);
   } catch (error) {
+    logError("payment_proof_capture_failed", error, {
+      accountId: account.id,
+      accountKey: account.accountKey,
+      messageId,
+      remoteJid,
+      senderJid,
+      mediaType: media.type,
+      filePath
+    });
     await storeWhatsappPaymentProof({
       account,
       messageId,

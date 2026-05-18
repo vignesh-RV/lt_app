@@ -30,7 +30,9 @@ document.getElementById("logout").onclick = logout;
 document.getElementById("refreshAll").onclick = refreshAll;
 document.getElementById("addAccount").onclick = addAccount;
 document.getElementById("loadBookings").onclick = loadBookings;
+document.getElementById("bookingType").onchange = renderBookingRows;
 document.getElementById("loadEvents").onclick = loadEvents;
+document.getElementById("eventType").onchange = renderEventRows;
 document.getElementById("loadProofs").onclick = loadProofs;
 document.getElementById("loadSupport").onclick = loadSupport;
 document.getElementById("loadCredits").onclick = loadCredits;
@@ -49,6 +51,7 @@ document.getElementById("supportManualCard").onclick = () => showSupportDetails(
 for (const button of document.querySelectorAll(".tab")) {
   button.onclick = () => showTab(button.dataset.tab);
 }
+window.addEventListener("hashchange", () => showTab(routeTabFromHash(), { skipRoute: true }));
 
 init();
 
@@ -62,6 +65,7 @@ async function init() {
   }
   if (session.authenticated) {
     showApp();
+    showTab(routeTabFromHash(), { skipRoute: true });
     startAutoRefresh();
     refreshAll();
   }
@@ -81,6 +85,7 @@ async function login(event) {
       }
     });
     showApp();
+    showTab(routeTabFromHash(), { skipRoute: true });
     startAutoRefresh();
     refreshAll();
   } catch (error) {
@@ -124,7 +129,13 @@ function showLogin() {
   document.getElementById("loginView").classList.remove("hidden");
 }
 
-function showTab(tab) {
+function showTab(tab, options = {}) {
+  if (!pageMeta[tab]) {
+    tab = "overview";
+  }
+  if (!options.skipRoute && window.location.hash !== `#${tab}`) {
+    history.pushState(null, "", `#${tab}`);
+  }
   document.querySelectorAll(".tab").forEach((item) => item.classList.toggle("active", item.dataset.tab === tab));
   document.querySelectorAll(".panel").forEach((item) => item.classList.toggle("active", item.id === tab));
   document.getElementById("pageTitle").textContent = pageMeta[tab][0];
@@ -135,6 +146,11 @@ function showTab(tab) {
   if (tab === "support") loadSupport();
   if (tab === "forwarding") loadForwardTargets();
   if (tab === "credits") loadCredits();
+}
+
+function routeTabFromHash() {
+  const tab = String(window.location.hash || "").replace(/^#\/?/, "");
+  return pageMeta[tab] ? tab : "overview";
 }
 
 async function refreshAll() {
@@ -376,7 +392,8 @@ async function loadBookings() {
 
 function renderBookingRows() {
   const rows = document.getElementById("bookingRows");
-  rows.innerHTML = state.bookings.map((item) => `
+  const filtered = state.bookings.filter(matchesBookingType);
+  rows.innerHTML = filtered.map((item) => `
     <tr>
       <td>${formatDate(item.receivedAt)}</td>
       <td>${escapeHtml(item.accountKey)}</td>
@@ -387,7 +404,29 @@ function renderBookingRows() {
       <td class="message">${escapeHtml(item.messageText)}</td>
       <td><button class="icon-btn danger" onclick="deleteBooking(${item.id})" title="Delete booking">×</button></td>
     </tr>
-  `).join("") || `<tr><td colspan="8">No bookings captured.</td></tr>`;
+  `).join("") || `<tr><td colspan="8">No bookings match this filter.</td></tr>`;
+}
+
+function matchesBookingType(item) {
+  const type = document.getElementById("bookingType")?.value || "";
+  if (!type) return true;
+  if (type === "manual") return Boolean(item.manualWork);
+  if (type === "forwarded") return Boolean(item.forwardedAt);
+  if (type === "payment_missing") {
+    return !item.forwardedAt
+      && !item.manualWork
+      && item.calculatedPrice !== null
+      && item.calculatedPrice !== undefined
+      && item.calculatedPrice !== "";
+  }
+  if (type === "test_capture") return item.showCode === "TEST_CAPTURE";
+  if (type === "priced") {
+    return !item.manualWork
+      && item.calculatedPrice !== null
+      && item.calculatedPrice !== undefined
+      && item.calculatedPrice !== "";
+  }
+  return true;
 }
 
 async function loadBookingStats() {
@@ -496,7 +535,9 @@ async function loadEvents() {
 
 function renderEventRows() {
   const rows = document.getElementById("eventRows");
-  rows.innerHTML = state.events.map((item) => `
+  const eventType = document.getElementById("eventType")?.value || "";
+  const filtered = eventType ? state.events.filter((item) => item.eventType === eventType) : state.events;
+  rows.innerHTML = filtered.map((item) => `
     <tr>
       <td>${formatDate(item.createdAt)}</td>
       <td>${escapeHtml(item.accountKey)}</td>
@@ -504,7 +545,7 @@ function renderEventRows() {
       <td>${escapeHtml(item.detail)}</td>
       <td class="message">${eventMessageCell(item)}</td>
     </tr>
-  `).join("") || `<tr><td colspan="5">No listener events yet.</td></tr>`;
+  `).join("") || `<tr><td colspan="5">No listener events match this filter.</td></tr>`;
 }
 
 function eventMessageCell(item) {
@@ -650,7 +691,7 @@ function renderProofRows() {
   const rows = document.getElementById("proofRows");
   rows.innerHTML = state.proofs.map((item) => {
     const reference = item.transactionId || item.utr || item.proof?.uniqueReference || "-";
-    const preview = item.ocrText || item.proof?.rawText || "";
+    const preview = item.ocrText || item.proof?.rawText || item.proof?.error || "";
     return `
       <tr>
         <td>${formatDate(item.receivedAt)}</td>
@@ -907,7 +948,10 @@ function proofStatus(item) {
   };
   const status = item.status || "parsed";
   const matched = item.matchedCreditId ? ` #${escapeHtml(item.matchedCreditId)}` : "";
-  return `<span class="status">${escapeHtml(labels[status] || status)}${matched}</span>`;
+  const error = status === "ocr_failed" && item.proof?.error
+    ? `<br><span class="meta">${escapeHtml(item.proof.error).slice(0, 160)}</span>`
+    : "";
+  return `<span class="status">${escapeHtml(labels[status] || status)}${matched}</span>${error}`;
 }
 
 function proofForwardStatus(item) {

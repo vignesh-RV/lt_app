@@ -107,6 +107,14 @@
           <option value="8PM_DEAR">8PM Dear</option>
           <option value="TEST_CAPTURE">Test capture</option>
         </select>
+            <select id="bookingType">
+              <option value="">All booking types</option>
+              <option value="priced">Priced</option>
+              <option value="manual">Manual</option>
+              <option value="forwarded">Forwarded</option>
+              <option value="payment_missing">Payment missing</option>
+              <option value="test_capture">Test capture</option>
+            </select>
             <button id="loadBookings">Refresh</button>
           </div>
           <div class="table-wrap">
@@ -122,6 +130,16 @@
         <div class="surface">
           <div class="toolbar">
             <select id="eventAccount"></select>
+            <select id="eventType">
+              <option value="">All event types</option>
+              <option value="message_captured">Message captured</option>
+              <option value="message_skipped">Message skipped</option>
+              <option value="pricing_failed">Pricing failed</option>
+              <option value="payment_proof_parsed">Payment parsed</option>
+              <option value="payment_proof_failed">Payment failed</option>
+              <option value="booking_forwarded">Booking forwarded</option>
+              <option value="messages.upsert">Messages upsert</option>
+            </select>
             <button id="loadEvents">Refresh</button>
           </div>
           <div class="table-wrap">
