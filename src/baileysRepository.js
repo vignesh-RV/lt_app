@@ -989,6 +989,39 @@ export async function listWhatsappPaymentProofs({ accountId = 0, limit = 100 } =
   return result.rows;
 }
 
+export async function getWhatsappPaymentProofById(id) {
+  const result = await query(
+    `
+      SELECT
+        id,
+        account_id AS "accountId",
+        account_key AS "accountKey",
+        message_id AS "messageId",
+        remote_jid AS "remoteJid",
+        sender_jid AS "senderJid",
+        push_name AS "pushName",
+        media_type AS "mediaType",
+        file_path AS "filePath",
+        ocr_text AS "ocrText",
+        proof_json AS "proof",
+        amount::TEXT,
+        transaction_id AS "transactionId",
+        utr,
+        status,
+        matched_credit_id AS "matchedCreditId",
+        matched_booking_id AS "matchedBookingId",
+        forwarded_at AS "forwardedAt",
+        forward_error AS "forwardError",
+        received_at AS "receivedAt",
+        created_at AS "createdAt"
+      FROM whatsapp_payment_proofs
+      WHERE id = $1
+    `,
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
 export function normalizeAccountKey(value) {
   return String(value || "")
     .trim()

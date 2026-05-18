@@ -15,6 +15,7 @@ import {
   listForwardableBookingsForProof,
   listWhatsappChats,
   listListenerAccounts,
+  getWhatsappPaymentProofById,
   markBookingForwarded,
   markPaymentProofForwardResult,
   setListenerEnabled,
@@ -184,6 +185,114 @@ export async function retryManualBooking(bookingId) {
   return { booking: updated, pricing };
 }
 
+export async function retryPaymentProof(proofId) {
+  const existingProof = await getWhatsappPaymentProofById(proofId);
+  if (!existingProof) {
+    throw new Error("Payment proof not found");
+  }
+  const account = await getListenerAccountById(existingProof.accountId);
+  if (!account) {
+    throw new Error("WhatsApp account not found");
+  }
+  if (!existingProof.filePath) {
+    throw new Error("Payment proof file path is missing");
+  }
+
+  try {
+    logInfo("payment_proof_retry_start", {
+      accountId: account.id,
+      accountKey: account.accountKey,
+      proofId,
+      messageId: existingProof.messageId,
+      filePath: existingProof.filePath
+    });
+    const ocrText = await readImageText(existingProof.filePath);
+    const proof = parsePaymentProofText(ocrText);
+    const reference = proof.uniqueReference || proof.transactionId || proof.utr || "";
+    const matchedCredit = proof.amount || reference
+      ? await findCreditForProof({ transactionId: reference, amount: proof.amount || null })
+      : null;
+    const status = matchedCredit
+      ? (proof.amount && Number(matchedCredit.amount) !== Number(proof.amount) ? "amount_mismatch" : "matched")
+      : "not_found";
+    const updatedProof = await storeWhatsappPaymentProof({
+      account,
+      messageId: existingProof.messageId,
+      remoteJid: existingProof.remoteJid,
+      senderJid: existingProof.senderJid,
+      pushName: existingProof.pushName || "",
+      mediaType: existingProof.mediaType || "image",
+      filePath: existingProof.filePath,
+      ocrText,
+      proof,
+      status,
+      matchedCreditId: matchedCredit?.id || null,
+      receivedAt: existingProof.receivedAt ? new Date(existingProof.receivedAt) : new Date()
+    });
+
+    if (status === "matched" && updatedProof?.id) {
+      await forwardPaidBooking({
+        account,
+        paymentProofId: updatedProof.id,
+        remoteJid: existingProof.remoteJid,
+        senderJid: existingProof.senderJid,
+        amount: proof.amount || matchedCredit.amount,
+        receivedAt: existingProof.receivedAt ? new Date(existingProof.receivedAt) : new Date()
+      });
+    }
+
+    await storeListenerEvent({
+      account,
+      eventType: "payment_proof_retry_done",
+      detail: `status=${status}; amount=${proof.amount || "-"}; ref=${reference || "-"}; credit=${matchedCredit?.id || "-"}`,
+      messageId: existingProof.messageId || "",
+      remoteJid: existingProof.remoteJid || "",
+      senderJid: existingProof.senderJid || "",
+      messageText: ocrText
+    });
+    logInfo("payment_proof_retry_success", {
+      accountId: account.id,
+      accountKey: account.accountKey,
+      proofId,
+      status,
+      amount: proof.amount || "",
+      reference: reference || "",
+      matchedCreditId: matchedCredit?.id || ""
+    });
+    return { proof: updatedProof, status };
+  } catch (error) {
+    logError("payment_proof_retry_failed", error, {
+      accountId: account.id,
+      accountKey: account.accountKey,
+      proofId,
+      messageId: existingProof.messageId,
+      filePath: existingProof.filePath
+    });
+    await storeWhatsappPaymentProof({
+      account,
+      messageId: existingProof.messageId,
+      remoteJid: existingProof.remoteJid,
+      senderJid: existingProof.senderJid,
+      pushName: existingProof.pushName || "",
+      mediaType: existingProof.mediaType || "image",
+      filePath: existingProof.filePath,
+      ocrText: "",
+      proof: { error: error.message || "OCR retry failed" },
+      status: "ocr_failed",
+      receivedAt: existingProof.receivedAt ? new Date(existingProof.receivedAt) : new Date()
+    });
+    await storeListenerEvent({
+      account,
+      eventType: "payment_proof_retry_failed",
+      detail: error.message || "OCR retry failed",
+      messageId: existingProof.messageId || "",
+      remoteJid: existingProof.remoteJid || "",
+      senderJid: existingProof.senderJid || ""
+    });
+    throw error;
+  }
+}
+
 async function startAccountSocket(account) {
   const accountId = socketKey(account.id);
   if (sockets.has(accountId)) {
@@ -198,8 +307,7 @@ async function startAccountSocket(account) {
     logger,
     printQRInTerminal: false,
     markOnlineOnConnect: false,
-    syncFullHistory: false,
-    shouldSyncHistoryMessage: () => false
+    syncFullHistory: false
   });
 
   sockets.set(accountId, { account, socket, startedAt: new Date().toISOString(), connected: false });

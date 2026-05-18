@@ -725,9 +725,33 @@ function renderProofRows() {
         <td>${proofStatus(item)}</td>
         <td>${proofForwardStatus(item)}</td>
         <td class="message">${escapeHtml(preview).slice(0, 500)}</td>
+        <td>${proofActions(item)}</td>
       </tr>
     `;
-  }).join("") || `<tr><td colspan="8">No payment screenshots captured.</td></tr>`;
+  }).join("") || `<tr><td colspan="9">No payment screenshots captured.</td></tr>`;
+}
+
+function proofActions(item) {
+  if (item.forwardedAt) {
+    return "";
+  }
+  return `<button class="icon-btn secondary" onclick="retryPaymentProof(${item.id})" title="Retry proof OCR">R</button>`;
+}
+
+async function retryPaymentProof(id) {
+  try {
+    await api(`/payment-proofs/${id}/retry`, { method: "POST" });
+    await loadProofs();
+    await loadBookings();
+    await loadEvents();
+    await loadSupport();
+    renderOverview();
+    markUpdated();
+  } catch (error) {
+    alert(error.message);
+    await loadProofs();
+    await loadEvents();
+  }
 }
 
 async function loadForwardTargets() {

@@ -23,6 +23,7 @@ import {
   getBaileysRuntimeStatus,
   listBaileysChats,
   retryManualBooking,
+  retryPaymentProof,
   startBaileysAccount,
   stopBaileysAccount
 } from "./baileysService.js";
@@ -266,6 +267,14 @@ adminDashboardRouter.get("/payment-proofs", async (req, res, next) => {
     });
   } catch (error) {
     next(error);
+  }
+});
+
+adminDashboardRouter.post("/payment-proofs/:id/retry", async (req, res, next) => {
+  try {
+    res.json({ ok: true, ...(await retryPaymentProof(Number(req.params.id))) });
+  } catch (error) {
+    res.status(error.statusCode || 400).json({ ok: false, error: error.message || "Payment proof retry failed" });
   }
 });
 
