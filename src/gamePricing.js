@@ -421,6 +421,8 @@ function rebuildEntryWithSetCount(entry, setCount) {
 function normalizeText(text) {
   return String(text || "")
     .replace(/(\d)\s*sR\s*(\d)/gi, "$1 Rs$2")
+    .replace(/\b(rs\.?|inr|₹|â‚¹)\s*(\d+(?:\.\d{1,2})?)[_-]+(?=(?:ab|bc|ac|a|b|c)[_-]*\d)/gi, "$1$2 ")
+    .replace(/\b(\d+(?:\.\d{1,2})?)\s*(rs\.?|inr|₹|â‚¹)[_-]+(?=(?:ab|bc|ac|a|b|c)[_-]*\d)/gi, "$1$2 ")
     .replace(/\b(\d+(?:\.\d{1,2})?)\s*(rs\.?|inr|₹)\s*(boxs?)\b/gi, "$1$2 $3")
     .replace(/\b(rs\.?|inr|₹)\s*(\d+(?:\.\d{1,2})?)\s*(boxs?)\b/gi, "$1$2 $3")
     .replace(/[.…]+/g, "-")
@@ -707,6 +709,12 @@ function isKnownPricingToken(token) {
     return true;
   }
   if (/^(?:(?:ab|bc|ac|a|b|c)[\s_-]*)?\d{1,4}[=_-]\d{1,3}(?:s|set|sets|sef)?$/i.test(cleaned)) {
+    return true;
+  }
+  if (/^(?:rs\.?|inr|\u20b9|â‚¹)?\d{1,4}(?:\.\d{1,2})?[_-]+(?:ab|bc|ac|a|b|c)[_-]*\d{1,4}[=_-]\d{1,3}(?:s|set|sets|sef)?$/i.test(cleaned)) {
+    return true;
+  }
+  if (/^\d{1,4}(?:\.\d{1,2})?(?:rs\.?|inr|\u20b9|â‚¹)[_-]+(?:ab|bc|ac|a|b|c)[_-]*\d{1,4}[=_-]\d{1,3}(?:s|set|sets|sef)?$/i.test(cleaned)) {
     return true;
   }
   if (/^(?:ab|bc|ac|a|b|c)\d{1,4}$/i.test(cleaned) || /^=\d{1,3}(?:s|set|sets|sef)?$/i.test(cleaned)) {
