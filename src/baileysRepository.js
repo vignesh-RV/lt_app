@@ -250,6 +250,61 @@ export async function listInboundWhatsappMessages({ accountId = 0, showCode = ""
   return result.rows;
 }
 
+export async function getInboundWhatsappMessageById(id) {
+  const result = await query(
+    `
+      SELECT
+        id,
+        account_id AS "accountId",
+        account_key AS "accountKey",
+        message_id AS "messageId",
+        remote_jid AS "remoteJid",
+        sender_jid AS "senderJid",
+        push_name AS "pushName",
+        message_text AS "messageText",
+        message_json AS "messageJson",
+        show_code AS "showCode",
+        listener_window AS "listenerWindow",
+        calculated_price::TEXT AS "calculatedPrice",
+        pricing_breakdown AS "pricingBreakdown",
+        manual_work AS "manualWork",
+        received_at AS "receivedAt"
+      FROM whatsapp_inbound_messages
+      WHERE id = $1
+    `,
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
+export async function updateInboundWhatsappPricing(id, pricing) {
+  const result = await query(
+    `
+      UPDATE whatsapp_inbound_messages
+      SET
+        calculated_price = $2,
+        pricing_breakdown = $3::JSONB,
+        manual_work = $4,
+        processing_status = $5
+      WHERE id = $1
+      RETURNING
+        id,
+        calculated_price::TEXT AS "calculatedPrice",
+        pricing_breakdown AS "pricingBreakdown",
+        manual_work AS "manualWork",
+        processing_status AS "processingStatus"
+    `,
+    [
+      id,
+      pricing?.manualWork ? null : pricing?.totalPrice || null,
+      JSON.stringify(pricing?.breakdown || {}),
+      Boolean(pricing?.manualWork),
+      pricing?.manualWork ? "manual_work" : "priced"
+    ]
+  );
+  return result.rows[0] || null;
+}
+
 export async function listForwardTargets() {
   const result = await query(
     `

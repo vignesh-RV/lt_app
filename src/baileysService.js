@@ -11,6 +11,7 @@ import {
   addCustomerPaymentBalance,
   getListenerAccountById,
   getCustomerPaymentBalance,
+  getInboundWhatsappMessageById,
   listForwardableBookingsForProof,
   listWhatsappChats,
   listListenerAccounts,
@@ -21,6 +22,7 @@ import {
   storeListenerEvent,
   storeWhatsappPaymentProof,
   setCustomerPaymentBalance,
+  updateInboundWhatsappPricing,
   upsertWhatsappChat,
   updateListenerAccountStatus
 } from "./baileysRepository.js";
@@ -118,6 +120,68 @@ export async function listBaileysChats(accountId, { refresh = false, query = "" 
     })
     .slice(0, 300);
   return mergeChats([...runtimeChats, ...storedChats]);
+}
+
+export async function retryManualBooking(bookingId) {
+  const booking = await getInboundWhatsappMessageById(bookingId);
+  if (!booking) {
+    throw new Error("Booking not found");
+  }
+  const account = await getListenerAccountById(booking.accountId);
+  if (!account) {
+    throw new Error("WhatsApp account not found");
+  }
+  const activeWindow = activeBookingWindow(new Date());
+  if (booking.showCode !== "TEST_CAPTURE" && (!activeWindow.active || activeWindow.showCode !== booking.showCode)) {
+    const reason = activeWindow.active
+      ? `Booking window closed for ${booking.showCode}. Current active window is ${activeWindow.showCode}.`
+      : `Booking window closed for ${booking.showCode}. No booking window is active now.`;
+    await storeListenerEvent({
+      account,
+      eventType: "manual_retry_blocked",
+      detail: reason,
+      messageId: booking.messageId || "",
+      remoteJid: booking.remoteJid || "",
+      senderJid: booking.senderJid || "",
+      messageText: booking.messageText || ""
+    });
+    const error = new Error(reason);
+    error.statusCode = 409;
+    throw error;
+  }
+  const receivedAt = booking.receivedAt ? new Date(booking.receivedAt) : new Date();
+  const pricing = await calculatePredictionPricing(booking.messageText || "", receivedAt);
+  if (!pricing) {
+    throw new Error("Pricing could not be calculated");
+  }
+  const updated = await updateInboundWhatsappPricing(booking.id, pricing);
+  await storeListenerEvent({
+    account,
+    eventType: pricing.manualWork ? "manual_retry_still_manual" : "manual_retry_priced",
+    detail: pricing.manualWork
+      ? pricing.breakdown?.reason || "still requires manual support"
+      : `amount=${pricing.totalPrice}`,
+    messageId: booking.messageId || "",
+    remoteJid: booking.remoteJid || "",
+    senderJid: booking.senderJid || "",
+    messageText: booking.messageText || ""
+  });
+
+  if (isAutoReplyPricing(pricing)) {
+    const message = storedBookingToBaileysMessage(booking);
+    await enqueueOutboundReply(async () => {
+      await sendPricingReply(account, message, booking.messageText || "", pricing);
+      await applyCarriedBalanceForBooking({
+        account,
+        message,
+        pricing,
+        window: booking.listenerWindow || {},
+        receivedAt
+      });
+    });
+  }
+
+  return { booking: updated, pricing };
 }
 
 async function startAccountSocket(account) {
@@ -695,6 +759,25 @@ function quotedPredictionMessage(message) {
     key: message.key,
     message: message.message,
     pushName: message.pushName || ""
+  };
+}
+
+function storedBookingToBaileysMessage(booking) {
+  const stored = booking.messageJson || {};
+  if (stored?.key && stored?.message) {
+    return stored;
+  }
+  return {
+    key: {
+      id: booking.messageId || "",
+      remoteJid: booking.remoteJid || "",
+      participant: booking.senderJid || undefined,
+      fromMe: false
+    },
+    message: {
+      conversation: booking.messageText || ""
+    },
+    pushName: booking.pushName || ""
   };
 }
 

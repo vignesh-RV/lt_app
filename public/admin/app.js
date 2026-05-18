@@ -405,6 +405,15 @@ function renderBookingRows() {
       <td><button class="icon-btn danger" onclick="deleteBooking(${item.id})" title="Delete booking">×</button></td>
     </tr>
   `).join("") || `<tr><td colspan="8">No bookings match this filter.</td></tr>`;
+  rows.querySelectorAll("tr").forEach((row, index) => {
+    const item = filtered[index];
+    const actionCell = row.lastElementChild;
+    if (!item?.manualWork || !actionCell) return;
+    actionCell.insertAdjacentHTML(
+      "afterbegin",
+      `<button class="icon-btn secondary" onclick="retryBookingPricing(${item.id})" title="Retry pricing">R</button>`
+    );
+  });
 }
 
 function matchesBookingType(item) {
@@ -523,6 +532,20 @@ async function deleteBooking(id) {
   await loadBookings();
   renderOverview();
   markUpdated();
+}
+
+async function retryBookingPricing(id) {
+  try {
+    await api(`/bookings/${id}/retry-pricing`, { method: "POST" });
+    await loadBookings();
+    await loadEvents();
+    await loadSupport();
+    renderOverview();
+    markUpdated();
+  } catch (error) {
+    alert(error.message);
+    await loadEvents();
+  }
 }
 
 async function loadEvents() {

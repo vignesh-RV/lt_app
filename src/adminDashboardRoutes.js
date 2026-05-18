@@ -22,6 +22,7 @@ import {
 import {
   getBaileysRuntimeStatus,
   listBaileysChats,
+  retryManualBooking,
   startBaileysAccount,
   stopBaileysAccount
 } from "./baileysService.js";
@@ -224,6 +225,18 @@ adminDashboardRouter.delete("/bookings/:id", async (req, res, next) => {
     const deleted = await deleteInboundWhatsappMessage(Number(req.params.id));
     res.json({ ok: true, deleted });
   } catch (error) {
+    next(error);
+  }
+});
+
+adminDashboardRouter.post("/bookings/:id/retry-pricing", async (req, res, next) => {
+  try {
+    res.json({ ok: true, ...(await retryManualBooking(Number(req.params.id))) });
+  } catch (error) {
+    if (error.statusCode) {
+      res.status(error.statusCode).json({ ok: false, error: error.message });
+      return;
+    }
     next(error);
   }
 });
